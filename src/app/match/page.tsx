@@ -6,7 +6,7 @@ type Row = { text: string };
 
 export default function MatchPage() {
     const [prefixText, setPrefixText] = useState<string>("2M");
-    const [loading, setLoading] = useState<boolean>(false);
+    const [loading, setLoading] = useState<boolean>(true); // Start with true to show loading state
     const [error, setError] = useState<string>("");
     const [expected, setExpected] = useState<Row[]>([]); // from mo_ocr_results
     const [scanned, setScanned] = useState<Row[]>([]);   // from mo_scan_items
@@ -38,7 +38,10 @@ export default function MatchPage() {
         }
     }, []);
 
-    useEffect(() => { refresh(); }, [refresh]);
+    useEffect(() => { 
+        refresh(); 
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []); // Only run once on mount
 
     const expectedSet = useMemo(() => {
         const s = new Set<string>();
@@ -73,6 +76,25 @@ export default function MatchPage() {
         URL.revokeObjectURL(url);
     }, []);
 
+    const clearScanItems = useCallback(async () => {
+        if (!confirm("스캔 데이터(mo_scan_items)를 모두 삭제할까요? 이 작업은 되돌릴 수 없습니다.")) return;
+        setLoading(true);
+        setError("");
+        try {
+            const { error } = await supabase
+                .from("mo_scan_items")
+                .delete()
+                .gt("id", 0); // delete all rows
+            if (error) throw error;
+            await refresh(); // Refresh data after clearing
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setError(`Clear failed: ${msg}`);
+        } finally {
+            setLoading(false);
+        }
+    }, [refresh]);
+
     return (
 		<div className="max-w-6xl mx-auto space-y-4">
 			<h1 className="text-2xl font-semibold">Match</h1>
@@ -80,12 +102,18 @@ export default function MatchPage() {
 				<label htmlFor="prefixes" className="text-gray-600">Allowed prefixes</label>
 				<input id="prefixes" value={prefixText} onChange={(e)=>setPrefixText(e.target.value)} className="rounded border px-2 py-1" />
 				<button onClick={refresh} disabled={loading} className={`rounded px-3 py-2 text-sm ${loading?"bg-gray-300 text-gray-500":"bg-black text-white hover:bg-gray-800"}`}>{loading?"Refreshing...":"Refresh"}</button>
+				<button onClick={clearScanItems} disabled={loading} className="rounded px-3 py-2 text-sm bg-red-200 text-red-800 hover:bg-red-300">Clear Scan Data</button>
 			</div>
 
 			{error && (
 				<div className="rounded border bg-white p-3 text-sm text-red-600">{error}</div>
 			)}
 
+			{loading && (
+				<div className="rounded border bg-white p-4 text-center text-gray-600">Loading data...</div>
+			)}
+
+			{!loading && (
 			<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
 				<div className="rounded border bg-white p-4">
 					<h2 className="font-medium mb-2">Overview</h2>
@@ -120,6 +148,7 @@ export default function MatchPage() {
 					</ul>
 				</div>
 			</div>
+			)}
 		</div>
     );
 }

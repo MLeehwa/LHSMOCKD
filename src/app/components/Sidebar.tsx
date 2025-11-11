@@ -10,8 +10,14 @@ const nav = [
 
 export default function Sidebar() {
 	const pathname = usePathname();
+	
+	// Hide sidebar on scan page (for PDA/mobile use)
+	if (pathname === "/scan") {
+		return null;
+	}
+	
 	return (
-		<aside className="w-64 shrink-0 border-r bg-white/60 backdrop-blur">
+		<aside className="hidden sm:block w-64 shrink-0 border-r bg-white/60 backdrop-blur">
 			<div className="p-4 text-lg font-semibold">OCR Demo</div>
 			<nav className="px-2 pb-4 space-y-1">
 				{nav.map(({ href, label }) => {

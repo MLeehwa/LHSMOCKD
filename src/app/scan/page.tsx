@@ -1,5 +1,6 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { supabase } from "../../lib/supabaseClient";
 import { normalizeBarcode } from "../../lib/barcode";
 
@@ -19,6 +20,7 @@ export default function ScanPage() {
     const submitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const expectedCacheRef = useRef<Set<string>>(new Set());
     const seenRef = useRef<Set<string>>(new Set());
+    const [expectedList, setExpectedList] = useState<string[]>([]); // Store full expected list for display
 
     const allowedPrefixes = useCallback(() =>
         prefixText.split(",").map(p => p.trim()).filter(Boolean), [prefixText]);
@@ -97,14 +99,22 @@ export default function ScanPage() {
             const { data, error } = await supabase.from("mo_ocr_results").select("text");
             if (error) throw error;
             const set = new Set<string>();
-            for (const r of data ?? []) set.add(normalizeBarcode((r as any).text));
+            const list: string[] = [];
+            for (const r of data ?? []) {
+                const normalized = normalizeBarcode((r as any).text);
+                if (shouldInclude(normalized)) {
+                    set.add(normalized);
+                    list.push(normalized);
+                }
+            }
             expectedCacheRef.current = set;
+            setExpectedList(list.sort());
             setStatus(`Expected list loaded: ${set.size}`);
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             setStatus(`Load expected failed: ${msg}`);
         }
-    }, []);
+    }, [shouldInclude]);
 
     useEffect(() => { void loadExpectedCache(); }, [loadExpectedCache]);
 
@@ -142,70 +152,156 @@ export default function ScanPage() {
         seenRef.current.clear();
         setMatched([]);
         setUnmatched([]);
+        setCurrentCode("");
+        setStatus("");
+        inputRef.current?.focus();
     }, []);
 
+    // Calculate missing items (expected but not scanned yet)
+    const missing = expectedList.filter(text => !seenRef.current.has(text));
+
+    // Create unified list with proper ordering:
+    // 1. Unmatched (orange) - always on top
+    // 2. Missing (gray) - not scanned yet
+    // 3. Matched (green) - scanned and matched, move to bottom
+    const unifiedList = useMemo(() => {
+        const unmatchedItems = unmatched.map(it => ({ text: it.text, status: 'unmatched' as const }));
+        const missingItems = missing.map(text => ({ text, status: 'missing' as const }));
+        const matchedItems = matched.map(it => ({ text: it.text, status: 'matched' as const }));
+        
+        // Order: Unmatched first, then Missing, then Matched
+        return [...unmatchedItems, ...missingItems, ...matchedItems];
+    }, [unmatched, missing, matched]);
+
+    const clearScanDatabase = useCallback(async () => {
+        if (!confirm("스캔 데이터베이스를 모두 삭제할까요? 이 작업은 되돌릴 수 없습니다.")) return;
+        try {
+            const { error } = await supabase
+                .from("mo_scan_items")
+                .delete()
+                .gt("id", 0); // delete all rows
+            if (error) throw error;
+            setStatus("Scan database cleared");
+            // Also reload expected cache after clearing
+            await loadExpectedCache();
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setStatus(`Clear failed: ${msg}`);
+        }
+    }, [loadExpectedCache]);
+
     return (
-		<div className="max-w-5xl mx-auto space-y-4">
-			<h1 className="text-2xl font-semibold">Scan</h1>
+		<div className="w-full max-w-full mx-auto space-y-3 px-2 sm:px-4">
+			{/* Navigation menu for scan page */}
+			<div className="flex items-center justify-between py-2 border-b mb-2">
+				<h1 className="text-2xl sm:text-3xl font-semibold">Scan</h1>
+				<nav className="flex gap-2">
+					<Link href="/" className="px-3 py-1.5 text-sm sm:text-base rounded bg-gray-100 text-gray-700 hover:bg-gray-200 active:bg-gray-300">
+						OCR
+					</Link>
+					<Link href="/match" className="px-3 py-1.5 text-sm sm:text-base rounded bg-gray-100 text-gray-700 hover:bg-gray-200 active:bg-gray-300">
+						Match
+					</Link>
+				</nav>
+			</div>
 			{status && (
-				<div className="rounded border bg-white p-3 text-sm text-gray-700">{status}</div>
+				<div className="rounded border bg-white p-3 text-sm sm:text-base text-gray-700">{status}</div>
 			)}
-			<div className="flex items-center gap-3 text-sm">
-				<label htmlFor="prefixes" className="text-gray-600">Allowed prefixes</label>
-				<input
-					id="prefixes"
-					value={prefixText}
-					onChange={(e) => setPrefixText(e.target.value)}
-					className="rounded border px-2 py-1"
-				/>
-                <label className="flex items-center gap-2 text-gray-600">
-					<input type="checkbox" checked={autoUpload} onChange={(e) => setAutoUpload(e.target.checked)} />
-					<span>Auto upload</span>
-				</label>
-                <button onClick={loadExpectedCache} className="rounded px-3 py-2 text-sm bg-blue-600 text-white hover:bg-blue-700">Refresh expected</button>
-                <label className="flex items-center gap-2 text-gray-600">
-                    <input type="checkbox" checked={autoSubmit} onChange={(e) => setAutoSubmit(e.target.checked)} />
-                    <span>Auto submit (no Enter)</span>
-                </label>
-                <input
-                    type="number"
-                    value={submitDelayMs}
-                    onChange={(e) => setSubmitDelayMs(Number(e.target.value) || 200)}
-                    className="w-20 rounded border px-2 py-1"
-                    title="Auto submit delay (ms)"
-                />
-                <button onClick={uploadBatch} disabled={(matched.length+unmatched.length)===0 || uploading} className={`rounded px-3 py-2 text-sm ${(matched.length+unmatched.length)===0 || uploading ? "bg-gray-300 text-gray-500" : "bg-emerald-600 text-white hover:bg-emerald-700"}`}>{uploading?"Saving...":"Save"}</button>
-				<button onClick={clearList} className="rounded px-3 py-2 text-sm bg-gray-200 text-gray-800 hover:bg-gray-300">Clear list</button>
+			{/* Mobile-optimized controls */}
+			<div className="space-y-3">
+				{/* Prefix input - full width on mobile */}
+				<div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+					<label htmlFor="prefixes" className="text-sm sm:text-base text-gray-600 whitespace-nowrap">Allowed prefixes</label>
+					<input
+						id="prefixes"
+						value={prefixText}
+						onChange={(e) => setPrefixText(e.target.value)}
+						className="w-full sm:w-auto rounded border px-3 py-2.5 text-base sm:text-sm"
+					/>
+				</div>
+				
+				{/* Checkboxes - stacked on mobile */}
+				<div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
+					<label className="flex items-center gap-2 text-sm sm:text-base text-gray-600">
+						<input type="checkbox" checked={autoUpload} onChange={(e) => setAutoUpload(e.target.checked)} className="w-5 h-5" />
+						<span>Auto upload</span>
+					</label>
+					<label className="flex items-center gap-2 text-sm sm:text-base text-gray-600">
+						<input type="checkbox" checked={autoSubmit} onChange={(e) => setAutoSubmit(e.target.checked)} className="w-5 h-5" />
+						<span>Auto submit (no Enter)</span>
+					</label>
+					{autoSubmit && (
+						<div className="flex items-center gap-2">
+							<label className="text-sm sm:text-base text-gray-600">Delay (ms):</label>
+							<input
+								type="number"
+								value={submitDelayMs}
+								onChange={(e) => setSubmitDelayMs(Number(e.target.value) || 200)}
+								className="w-24 rounded border px-2 py-2.5 text-base sm:text-sm"
+								title="Auto submit delay (ms)"
+							/>
+						</div>
+					)}
+				</div>
+				
+				{/* Buttons - full width on mobile, wrapped */}
+				<div className="flex flex-wrap gap-2">
+					<button onClick={loadExpectedCache} className="flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800">Refresh expected</button>
+					<button onClick={uploadBatch} disabled={(matched.length+unmatched.length)===0 || uploading} className={`flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm ${(matched.length+unmatched.length)===0 || uploading ? "bg-gray-300 text-gray-500" : "bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-800"}`}>{uploading?"Saving...":"Save"}</button>
+					<button onClick={clearList} className="flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm bg-gray-200 text-gray-800 hover:bg-gray-300 active:bg-gray-400">Clear list</button>
+					<button onClick={clearScanDatabase} className="flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm bg-red-200 text-red-800 hover:bg-red-300 active:bg-red-400">Clear Scan DB</button>
+				</div>
 			</div>
 
-            <div className="rounded border bg-gray-50 p-3">
-                <label className="block text-sm text-gray-800 mb-1">Barcode</label>
+            <div className="rounded border bg-gray-50 p-3 sm:p-4">
+                <label className="block text-base sm:text-sm text-gray-800 mb-2 font-semibold">Barcode</label>
                 <input
                     ref={inputRef}
                     value={currentCode}
                     onChange={(e) => setCurrentCode(e.target.value)}
                     onKeyDown={handleKey}
-                className="w-full rounded border px-3 py-2 font-mono text-gray-900 placeholder-gray-500 bg-amber-50 border-amber-300 focus:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    className="w-full rounded border px-4 py-4 sm:py-3 text-lg sm:text-base font-mono text-gray-900 placeholder-gray-500 bg-amber-50 border-amber-300 focus:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-400"
                     placeholder="Focus here and scan..."
+                    autoComplete="off"
                 />
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="rounded border bg-white p-3">
-                    <h2 className="mb-2 font-medium">Matched ({matched.length})</h2>
-                    <ul className="space-y-2">
-                        {matched.map((it, idx) => (
-                            <li key={idx} className="rounded border px-3 py-2 text-sm font-mono bg-emerald-50 text-gray-900 border-emerald-200">{it.text}</li>
-                        ))}
-                    </ul>
+            <div className="rounded border bg-white p-3 sm:p-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-3 gap-2">
+                    <h2 className="font-medium text-base sm:text-sm">
+                        List ({unifiedList.length})
+                    </h2>
+                    <div className="flex flex-wrap gap-2 sm:gap-3 text-xs sm:text-sm">
+                        <span className="text-orange-600 font-semibold">Unmatched: {unmatched.length}</span>
+                        <span className="text-gray-600 font-semibold">Missing: {missing.length}</span>
+                        <span className="text-emerald-600 font-semibold">Matched: {matched.length}</span>
+                    </div>
                 </div>
-                <div className="rounded border bg-white p-3">
-                    <h2 className="mb-2 font-medium">Unmatched ({unmatched.length})</h2>
-                    <ul className="space-y-2">
-                        {unmatched.map((it, idx) => (
-                            <li key={idx} className="rounded border px-3 py-2 text-sm font-mono bg-amber-50 text-gray-900 border-amber-200">{it.text}</li>
-                        ))}
-                    </ul>
-                </div>
+                <ul className="space-y-2 max-h-[60vh] sm:max-h-96 overflow-auto">
+                    {unifiedList.map((item, idx) => {
+                        let bgColor = "bg-gray-50";
+                        let borderColor = "border-gray-200";
+                        let textColor = "text-gray-600";
+                        
+                        if (item.status === 'unmatched') {
+                            bgColor = "bg-orange-50";
+                            borderColor = "border-orange-200";
+                            textColor = "text-gray-900";
+                        } else if (item.status === 'matched') {
+                            bgColor = "bg-emerald-50";
+                            borderColor = "border-emerald-200";
+                            textColor = "text-gray-900";
+                        }
+                        
+                        return (
+                            <li key={`${item.text}-${idx}`} className={`rounded border px-4 py-3 sm:px-3 sm:py-2 text-base sm:text-sm font-mono ${bgColor} ${textColor} ${borderColor}`}>
+                                {item.text}
+                            </li>
+                        );
+                    })}
+                    {unifiedList.length === 0 && (
+                        <li className="text-base sm:text-sm text-gray-500 italic py-4">No items</li>
+                    )}
+                </ul>
             </div>
 		</div>
     );
