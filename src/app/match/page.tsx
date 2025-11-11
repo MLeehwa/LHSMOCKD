@@ -97,7 +97,7 @@ export default function MatchPage() {
 
     return (
 		<div className="max-w-6xl mx-auto space-y-4">
-			<h1 className="text-2xl font-semibold">Match</h1>
+			<h1 className="text-2xl sm:text-3xl font-semibold">Match</h1>
 			<div className="flex items-center gap-3 text-sm">
 				<label htmlFor="prefixes" className="text-gray-600">Allowed prefixes</label>
 				<input id="prefixes" value={prefixText} onChange={(e)=>setPrefixText(e.target.value)} className="rounded border px-2 py-1" />

@@ -1,6 +1,5 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { supabase } from "../../lib/supabaseClient";
 import { normalizeBarcode } from "../../lib/barcode";
 
@@ -192,18 +191,7 @@ export default function ScanPage() {
 
     return (
 		<div className="w-full max-w-full mx-auto space-y-3 px-2 sm:px-4">
-			{/* Navigation menu for scan page */}
-			<div className="flex items-center justify-between py-2 border-b mb-2">
-				<h1 className="text-2xl sm:text-3xl font-semibold">Scan</h1>
-				<nav className="flex gap-2">
-					<Link href="/" className="px-3 py-1.5 text-sm sm:text-base rounded bg-gray-100 text-gray-700 hover:bg-gray-200 active:bg-gray-300">
-						OCR
-					</Link>
-					<Link href="/match" className="px-3 py-1.5 text-sm sm:text-base rounded bg-gray-100 text-gray-700 hover:bg-gray-200 active:bg-gray-300">
-						Match
-					</Link>
-				</nav>
-			</div>
+			<h1 className="text-2xl sm:text-3xl font-semibold">Scan</h1>
 			{status && (
 				<div className="rounded border bg-white p-3 text-sm sm:text-base text-gray-700">{status}</div>
 			)}

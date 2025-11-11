@@ -259,7 +259,7 @@ export default function UploadPage() {
 
 	return (
         <div className="max-w-5xl mx-auto space-y-6">
-			<h1 className="text-2xl font-semibold">OCR Uploader</h1>
+			<h1 className="text-2xl sm:text-3xl font-semibold">OCR Uploader</h1>
 			<div className="flex items-center gap-3 text-sm">
 				<label htmlFor="prefixes" className="text-gray-600">Allowed prefixes (comma separated)</label>
 				<input
