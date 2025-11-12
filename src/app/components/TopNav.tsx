@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 const nav = [
 	{ href: "/", label: "OCR" },
 	{ href: "/scan", label: "SCAN" },
+	{ href: "/search", label: "SEARCH" },
 	{ href: "/match", label: "MATCH" },
 ];
 

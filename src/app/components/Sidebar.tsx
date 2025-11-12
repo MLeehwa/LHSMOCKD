@@ -11,7 +11,7 @@ const nav = [
 export default function Sidebar() {
 	const pathname = usePathname();
 	
-	// Hide sidebar on scan page (for PDA/mobile use)
+	// Hide sidebar on scan page (scan page has its own sidebar)
 	if (pathname === "/scan") {
 		return null;
 	}

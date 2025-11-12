@@ -1,29 +1,21 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { usePathname } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
 import { normalizeBarcode } from "../../lib/barcode";
 
 type ScanItem = { text: string };
 
-export default function ScanPage() {
+export default function SearchPage() {
     const [prefixText, setPrefixText] = useState<string>("2M");
-    const [autoUpload, setAutoUpload] = useState<boolean>(false);
-    const [matched, setMatched] = useState<ScanItem[]>([]);
-    const [unmatched, setUnmatched] = useState<ScanItem[]>([]);
     const [status, setStatus] = useState<string>("");
-    const [uploading, setUploading] = useState<boolean>(false);
-    const inputRef = useRef<HTMLInputElement | null>(null);
-    const [currentCode, setCurrentCode] = useState<string>("");
-    const [autoSubmit, setAutoSubmit] = useState<boolean>(true);
-    const [submitDelayMs, setSubmitDelayMs] = useState<number>(200);
-    const submitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [searchQuery, setSearchQuery] = useState<string>(""); // Search query for filtering list
     const expectedCacheRef = useRef<Set<string>>(new Set());
     const seenRef = useRef<Set<string>>(new Set());
     const [expectedList, setExpectedList] = useState<string[]>([]); // Store full expected list for display
-    const [focusTarget, setFocusTarget] = useState<"barcode" | "none">("none"); // Which input to auto-focus (default "none" for PDA)
-    const pathname = usePathname();
-    const hasUnsavedData = useRef<boolean>(false); // Track if there's unsaved data
+    const [matched, setMatched] = useState<ScanItem[]>([]);
+    const [unmatched, setUnmatched] = useState<ScanItem[]>([]);
+    const [uploading, setUploading] = useState<boolean>(false);
+    const searchInputRef = useRef<HTMLInputElement | null>(null);
 
     const allowedPrefixes = useCallback(() =>
         prefixText.split(",").map(p => p.trim()).filter(Boolean), [prefixText]);
@@ -46,65 +38,7 @@ export default function ScanPage() {
         } else {
             setUnmatched(prev => [...prev, { text: normalized }]);
         }
-        hasUnsavedData.current = true; // Mark as having unsaved data
-
-        if (autoUpload) {
-            try {
-                await supabase.from("mo_ocr_results").upsert(
-                    [{ text: normalized, prefixes: prefixText, confidence: 0 }],
-                    { onConflict: "text" }
-                );
-            } catch (e) {
-                const msg = e instanceof Error ? e.message : String(e);
-                setStatus(`Auto-upload failed: ${msg}`);
-            }
-        }
-    }, [autoUpload, prefixText, shouldInclude]);
-
-    // Focus input based on selected focus target
-    useEffect(() => {
-        if (focusTarget === "barcode") {
-            inputRef.current?.focus();
-        }
-        // If focusTarget is "none", don't auto-focus
-        
-        const onFocus = () => {
-            if (focusTarget === "barcode") {
-                inputRef.current?.focus();
-            }
-            // If focusTarget is "none", do nothing
-        };
-        window.addEventListener("click", onFocus);
-        return () => window.removeEventListener("click", onFocus);
-    }, [focusTarget]);
-
-    // No session handling – items will be saved standalone
-
-    const handleKey = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
-        const key = e.key;
-        if (key === "Enter") {
-            const code = currentCode;
-            setCurrentCode("");
-            if (code.length > 0) addItem(code);
-            e.preventDefault();
-            return;
-        }
-    }, [addItem, currentCode]);
-
-    // Auto submit when typing stops (for scanners that don't send Enter)
-    useEffect(() => {
-        if (!autoSubmit) return;
-        if (!currentCode) return;
-        if (submitTimerRef.current) clearTimeout(submitTimerRef.current);
-        submitTimerRef.current = setTimeout(() => {
-            const code = currentCode;
-            setCurrentCode("");
-            if (code.length > 0) addItem(code);
-        }, Math.max(100, submitDelayMs));
-        return () => {
-            if (submitTimerRef.current) clearTimeout(submitTimerRef.current);
-        };
-    }, [autoSubmit, submitDelayMs, currentCode, addItem]);
+    }, [shouldInclude]);
 
     // Load expected cache from DB once (and provide a manual refresh)
     const loadExpectedCache = useCallback(async () => {
@@ -149,7 +83,6 @@ export default function ScanPage() {
                 .upsert(payload, { onConflict: "text" });
             if (error) throw error;
             setStatus("Uploaded batch");
-            hasUnsavedData.current = false; // Mark as saved
             // Clear UI lists after successful save (DB remains)
             setMatched([]);
             setUnmatched([]);
@@ -166,39 +99,9 @@ export default function ScanPage() {
         seenRef.current.clear();
         setMatched([]);
         setUnmatched([]);
-        setCurrentCode("");
+        setSearchQuery("");
         setStatus("");
-        hasUnsavedData.current = false;
-        inputRef.current?.focus();
     }, []);
-
-    // Auto-save when navigating away from scan page
-    useEffect(() => {
-        // Save when pathname changes away from /scan
-        if (pathname !== "/scan" && hasUnsavedData.current && (matched.length > 0 || unmatched.length > 0)) {
-            const saveData = async () => {
-                const items = [...matched, ...unmatched];
-                if (items.length === 0) return;
-                
-                try {
-                    const seen = new Set<string>();
-                    const payload = items.filter(i => {
-                        if (seen.has(i.text)) return false;
-                        seen.add(i.text);
-                        return true;
-                    }).map(i => ({ text: i.text, prefixes: prefixText, matched: matched.some(m => m.text === i.text) }));
-
-                    await supabase
-                        .from("mo_scan_items")
-                        .upsert(payload, { onConflict: "text" });
-                    hasUnsavedData.current = false;
-                } catch (e) {
-                    console.error("Auto-save failed:", e);
-                }
-            };
-            saveData();
-        }
-    }, [pathname, matched, unmatched, prefixText]);
 
     // Calculate missing items (expected but not scanned yet)
     const missing = expectedList.filter(text => !seenRef.current.has(text));
@@ -213,29 +116,26 @@ export default function ScanPage() {
         const matchedItems = matched.map(it => ({ text: it.text, status: 'matched' as const }));
         
         // Order: Unmatched first, then Missing, then Matched
-        return [...unmatchedItems, ...missingItems, ...matchedItems];
-    }, [unmatched, missing, matched]);
-
-    const clearScanDatabase = useCallback(async () => {
-        if (!confirm("스캔 데이터베이스를 모두 삭제할까요? 이 작업은 되돌릴 수 없습니다.")) return;
-        try {
-            const { error } = await supabase
-                .from("mo_scan_items")
-                .delete()
-                .gt("id", 0); // delete all rows
-            if (error) throw error;
-            setStatus("Scan database cleared");
-            // Also reload expected cache after clearing
-            await loadExpectedCache();
-        } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            setStatus(`Clear failed: ${msg}`);
+        let list = [...unmatchedItems, ...missingItems, ...matchedItems];
+        
+        // Apply search filter if search query exists - match by last 3 digits
+        if (searchQuery.trim()) {
+            const query = searchQuery.trim().toUpperCase();
+            // Extract last 3 characters from search query (or all if less than 3)
+            const searchSuffix = query.length >= 3 ? query.slice(-3) : query;
+            list = list.filter(item => {
+                const itemUpper = item.text.toUpperCase();
+                // Get last 3 characters of item text
+                const itemSuffix = itemUpper.length >= 3 ? itemUpper.slice(-3) : itemUpper;
+                return itemSuffix === searchSuffix;
+            });
         }
-    }, [loadExpectedCache]);
+        
+        return list;
+    }, [unmatched, missing, matched, searchQuery]);
 
-
-    // Handle double-click on list items to mark as scanned
-    const handleItemDoubleClick = useCallback((text: string, status: 'unmatched' | 'missing' | 'matched') => {
+    // Handle adding item from list
+    const handleAddItem = useCallback((text: string, status: 'unmatched' | 'missing' | 'matched') => {
         // Only process missing items (expected but not scanned) and unmatched items
         if (status === 'missing' || status === 'unmatched') {
             addItem(text);
@@ -245,7 +145,7 @@ export default function ScanPage() {
 
     return (
 		<div className="w-full max-w-full mx-auto space-y-3 px-2 sm:px-4">
-			<h1 className="text-2xl sm:text-3xl font-semibold">1층 스캔</h1>
+			<h1 className="text-2xl sm:text-3xl font-semibold">검색 (2층)</h1>
 			{status && (
 				<div className="rounded border bg-white p-3 text-sm sm:text-base text-gray-700">{status}</div>
 			)}
@@ -262,85 +162,31 @@ export default function ScanPage() {
 					/>
 				</div>
 				
-				{/* Checkboxes - stacked on mobile */}
-				<div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
-					<label className="flex items-center gap-2 text-sm sm:text-base text-gray-600">
-						<input type="checkbox" checked={autoUpload} onChange={(e) => setAutoUpload(e.target.checked)} className="w-5 h-5" />
-						<span>Auto upload</span>
-					</label>
-					<label className="flex items-center gap-2 text-sm sm:text-base text-gray-600">
-						<input type="checkbox" checked={autoSubmit} onChange={(e) => setAutoSubmit(e.target.checked)} className="w-5 h-5" />
-						<span>Auto submit (no Enter)</span>
-					</label>
-					{autoSubmit && (
-						<div className="flex items-center gap-2">
-							<label className="text-sm sm:text-base text-gray-600">Delay (ms):</label>
-							<input
-								type="number"
-								value={submitDelayMs}
-								onChange={(e) => setSubmitDelayMs(Number(e.target.value) || 200)}
-								className="w-24 rounded border px-2 py-2.5 text-base sm:text-sm"
-								title="Auto submit delay (ms)"
-							/>
-						</div>
-					)}
-				</div>
-				
-				{/* Focus target selection */}
-				<div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
-					<label className="text-sm sm:text-base text-gray-600 whitespace-nowrap">Auto Focus:</label>
-					<div className="flex gap-3 sm:gap-4">
-						<label className="flex items-center gap-2 text-sm sm:text-base text-gray-600 cursor-pointer">
-							<input 
-								type="radio" 
-								name="focusTarget" 
-								value="barcode"
-								checked={focusTarget === "barcode"} 
-								onChange={(e) => setFocusTarget("barcode")} 
-								className="w-4 h-4"
-							/>
-							<span>Barcode</span>
-						</label>
-						<label className="flex items-center gap-2 text-sm sm:text-base text-gray-600 cursor-pointer">
-							<input 
-								type="radio" 
-								name="focusTarget" 
-								value="none"
-								checked={focusTarget === "none"} 
-								onChange={(e) => setFocusTarget("none")} 
-								className="w-4 h-4"
-							/>
-							<span>None</span>
-						</label>
-					</div>
-				</div>
-				
 				{/* Buttons - full width on mobile, wrapped - PDA touch-friendly */}
 				<div className="flex flex-wrap gap-2">
 					<button onClick={loadExpectedCache} className="flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800 touch-manipulation min-h-[44px]">Refresh expected</button>
 					<button onClick={uploadBatch} disabled={(matched.length+unmatched.length)===0 || uploading} className={`flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm touch-manipulation min-h-[44px] ${(matched.length+unmatched.length)===0 || uploading ? "bg-gray-300 text-gray-500" : "bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-800"}`}>{uploading?"Saving...":"Save"}</button>
 					<button onClick={clearList} className="flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm bg-gray-200 text-gray-800 hover:bg-gray-300 active:bg-gray-400 touch-manipulation min-h-[44px]">Clear list</button>
-					<button onClick={clearScanDatabase} className="flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm bg-red-200 text-red-800 hover:bg-red-300 active:bg-red-400 touch-manipulation min-h-[44px]">Clear Scan DB</button>
 				</div>
 			</div>
 
-            <div className="rounded border bg-gray-50 p-3 sm:p-4">
-                <label className="block text-base sm:text-sm text-gray-800 mb-2 font-semibold">Barcode</label>
+            <div className="rounded border bg-white p-3 sm:p-4">
+                <label className="block text-base sm:text-sm text-gray-800 mb-2 font-semibold">검색 (끝 3자리)</label>
                 <input
-                    ref={inputRef}
-                    value={currentCode}
-                    onChange={(e) => setCurrentCode(e.target.value)}
-                    onKeyDown={handleKey}
-                    className="w-full rounded border px-4 py-4 sm:py-3 text-lg sm:text-base font-mono text-gray-900 placeholder-gray-500 bg-amber-50 border-amber-300 focus:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-400"
-                    placeholder="Focus here and scan..."
+                    ref={searchInputRef}
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full rounded border px-4 py-3 text-base font-mono text-gray-900 placeholder-gray-500 bg-blue-50 border-blue-300 focus:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    placeholder="끝 3자리 입력..."
                     autoComplete="off"
-                    inputMode="none"
+                    inputMode="numeric"
                 />
             </div>
             <div className="rounded border bg-white p-3 sm:p-4">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-3 gap-2">
                     <h2 className="font-medium text-base sm:text-sm">
-                        List ({unifiedList.length})
+                        List ({unifiedList.length}){searchQuery && ` (검색: "${searchQuery}")`}
                     </h2>
                     <div className="flex flex-wrap gap-2 sm:gap-3 text-xs sm:text-sm">
                         <span className="text-orange-600 font-semibold">Unmatched: {unmatched.length}</span>
@@ -371,18 +217,14 @@ export default function ScanPage() {
                             >
                                 <span className="font-mono text-base sm:text-sm flex-1">{item.text}</span>
                                 <button
-                                    onClick={() => {
-                                        if (item.status === 'missing' || item.status === 'unmatched') {
-                                            handleItemDoubleClick(item.text, item.status);
-                                        }
-                                    }}
+                                    onClick={() => handleAddItem(item.text, item.status)}
                                     disabled={item.status === 'matched'}
                                     className={`min-w-[60px] sm:min-w-[50px] px-3 py-2 sm:px-2 sm:py-1.5 text-sm sm:text-xs font-medium rounded touch-manipulation ${
                                         item.status === 'matched' 
                                             ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
                                             : 'bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800'
                                     }`}
-                                    title={item.status === 'matched' ? '이미 스캔됨' : '스캔된 것으로 표시'}
+                                    title={item.status === 'matched' ? '이미 스캔됨' : '스캔 작업 추가'}
                                 >
                                     {item.status === 'matched' ? '완료' : '추가'}
                                 </button>
@@ -397,3 +239,4 @@ export default function ScanPage() {
 		</div>
     );
 }
+
