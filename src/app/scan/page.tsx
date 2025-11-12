@@ -22,7 +22,7 @@ export default function ScanPage() {
     const seenRef = useRef<Set<string>>(new Set());
     const [expectedList, setExpectedList] = useState<string[]>([]); // Store full expected list for display
     const [searchQuery, setSearchQuery] = useState<string>(""); // Search query for filtering list
-    const [focusTarget, setFocusTarget] = useState<"barcode" | "search" | "none">("barcode"); // Which input to auto-focus
+    const [focusTarget, setFocusTarget] = useState<"barcode" | "search" | "none">("none"); // Which input to auto-focus (default "none" for PDA)
 
     const allowedPrefixes = useCallback(() =>
         prefixText.split(",").map(p => p.trim()).filter(Boolean), [prefixText]);
@@ -228,8 +228,13 @@ export default function ScanPage() {
         }
     }, [loadExpectedCache]);
 
+
     // Handle double-click on list items to mark as scanned
     const handleItemDoubleClick = useCallback((text: string, status: 'unmatched' | 'missing' | 'matched') => {
+        // Remove focus from search input first
+        if (document.activeElement === searchInputRef.current) {
+            searchInputRef.current?.blur();
+        }
         // Only process missing items (expected but not scanned) and unmatched items
         if (status === 'missing' || status === 'unmatched') {
             addItem(text);
@@ -320,12 +325,12 @@ export default function ScanPage() {
 					</div>
 				</div>
 				
-				{/* Buttons - full width on mobile, wrapped */}
+				{/* Buttons - full width on mobile, wrapped - PDA touch-friendly */}
 				<div className="flex flex-wrap gap-2">
-					<button onClick={loadExpectedCache} className="flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800">Refresh expected</button>
-					<button onClick={uploadBatch} disabled={(matched.length+unmatched.length)===0 || uploading} className={`flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm ${(matched.length+unmatched.length)===0 || uploading ? "bg-gray-300 text-gray-500" : "bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-800"}`}>{uploading?"Saving...":"Save"}</button>
-					<button onClick={clearList} className="flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm bg-gray-200 text-gray-800 hover:bg-gray-300 active:bg-gray-400">Clear list</button>
-					<button onClick={clearScanDatabase} className="flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm bg-red-200 text-red-800 hover:bg-red-300 active:bg-red-400">Clear Scan DB</button>
+					<button onClick={loadExpectedCache} className="flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800 touch-manipulation min-h-[44px]">Refresh expected</button>
+					<button onClick={uploadBatch} disabled={(matched.length+unmatched.length)===0 || uploading} className={`flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm touch-manipulation min-h-[44px] ${(matched.length+unmatched.length)===0 || uploading ? "bg-gray-300 text-gray-500" : "bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-800"}`}>{uploading?"Saving...":"Save"}</button>
+					<button onClick={clearList} className="flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm bg-gray-200 text-gray-800 hover:bg-gray-300 active:bg-gray-400 touch-manipulation min-h-[44px]">Clear list</button>
+					<button onClick={clearScanDatabase} className="flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm bg-red-200 text-red-800 hover:bg-red-300 active:bg-red-400 touch-manipulation min-h-[44px]">Clear Scan DB</button>
 				</div>
 			</div>
 
@@ -339,6 +344,7 @@ export default function ScanPage() {
                     className="w-full rounded border px-4 py-4 sm:py-3 text-lg sm:text-base font-mono text-gray-900 placeholder-gray-500 bg-amber-50 border-amber-300 focus:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-400"
                     placeholder="Focus here and scan..."
                     autoComplete="off"
+                    inputMode="none"
                 />
             </div>
             <div className="rounded border bg-white p-3 sm:p-4">
@@ -371,6 +377,7 @@ export default function ScanPage() {
                     className="w-full rounded border px-4 py-3 text-base font-mono text-gray-900 placeholder-gray-500 bg-blue-50 border-blue-300 focus:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
                     placeholder="검색어를 입력하세요..."
                     autoComplete="off"
+                    inputMode="numeric"
                 />
             </div>
             <div className="rounded border bg-white p-3 sm:p-4">
@@ -384,7 +391,7 @@ export default function ScanPage() {
                         <span className="text-emerald-600 font-semibold">Matched: {matched.length}</span>
                     </div>
                 </div>
-                <ul className="space-y-2 max-h-[60vh] sm:max-h-96 overflow-auto">
+                <ul className="space-y-2 max-h-[50vh] sm:max-h-96 overflow-auto touch-pan-y">
                     {unifiedList.map((item, idx) => {
                         let bgColor = "bg-gray-50";
                         let borderColor = "border-gray-200";
@@ -403,11 +410,25 @@ export default function ScanPage() {
                         return (
                             <li 
                                 key={`${item.text}-${idx}`} 
-                                className={`rounded border px-4 py-3 sm:px-3 sm:py-2 text-base sm:text-sm font-mono ${bgColor} ${textColor} ${borderColor} ${item.status === 'missing' || item.status === 'unmatched' ? 'cursor-pointer hover:opacity-80 active:opacity-60' : ''}`}
-                                onDoubleClick={() => handleItemDoubleClick(item.text, item.status)}
-                                title={item.status === 'missing' || item.status === 'unmatched' ? '더블 클릭하여 스캔된 것으로 표시' : ''}
+                                className={`rounded border px-3 py-2.5 sm:px-3 sm:py-2 flex items-center justify-between gap-2 ${bgColor} ${textColor} ${borderColor}`}
                             >
-                                {item.text}
+                                <span className="font-mono text-base sm:text-sm flex-1">{item.text}</span>
+                                <button
+                                    onClick={() => {
+                                        if (item.status === 'missing' || item.status === 'unmatched') {
+                                            handleItemDoubleClick(item.text, item.status);
+                                        }
+                                    }}
+                                    disabled={item.status === 'matched'}
+                                    className={`min-w-[60px] sm:min-w-[50px] px-3 py-2 sm:px-2 sm:py-1.5 text-sm sm:text-xs font-medium rounded touch-manipulation ${
+                                        item.status === 'matched' 
+                                            ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
+                                            : 'bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800'
+                                    }`}
+                                    title={item.status === 'matched' ? '이미 스캔됨' : '스캔된 것으로 표시'}
+                                >
+                                    {item.status === 'matched' ? '완료' : '추가'}
+                                </button>
                             </li>
                         );
                     })}
