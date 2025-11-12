@@ -13,6 +13,7 @@ export default function ScanPage() {
     const [status, setStatus] = useState<string>("");
     const [uploading, setUploading] = useState<boolean>(false);
     const inputRef = useRef<HTMLInputElement | null>(null);
+    const searchInputRef = useRef<HTMLInputElement | null>(null);
     const [currentCode, setCurrentCode] = useState<string>("");
     const [autoSubmit, setAutoSubmit] = useState<boolean>(true);
     const [submitDelayMs, setSubmitDelayMs] = useState<number>(200);
@@ -20,6 +21,8 @@ export default function ScanPage() {
     const expectedCacheRef = useRef<Set<string>>(new Set());
     const seenRef = useRef<Set<string>>(new Set());
     const [expectedList, setExpectedList] = useState<string[]>([]); // Store full expected list for display
+    const [searchQuery, setSearchQuery] = useState<string>(""); // Search query for filtering list
+    const [focusTarget, setFocusTarget] = useState<"barcode" | "search" | "none">("barcode"); // Which input to auto-focus
 
     const allowedPrefixes = useCallback(() =>
         prefixText.split(",").map(p => p.trim()).filter(Boolean), [prefixText]);
@@ -56,13 +59,34 @@ export default function ScanPage() {
         }
     }, [autoUpload, prefixText, shouldInclude]);
 
-    // Focus input for hardware barcode scanners (keyboard wedge)
+    // Focus input based on selected focus target
     useEffect(() => {
-        inputRef.current?.focus();
-        const onFocus = () => inputRef.current?.focus();
+        if (focusTarget === "barcode") {
+            inputRef.current?.focus();
+        } else if (focusTarget === "search") {
+            searchInputRef.current?.focus();
+        }
+        // If focusTarget is "none", don't auto-focus
+        
+        const onFocus = () => {
+            if (focusTarget === "barcode") {
+                // Don't focus barcode input if search input is currently focused
+                if (document.activeElement === searchInputRef.current) {
+                    return;
+                }
+                inputRef.current?.focus();
+            } else if (focusTarget === "search") {
+                // Don't focus search input if barcode input is currently focused
+                if (document.activeElement === inputRef.current) {
+                    return;
+                }
+                searchInputRef.current?.focus();
+            }
+            // If focusTarget is "none", do nothing
+        };
         window.addEventListener("click", onFocus);
         return () => window.removeEventListener("click", onFocus);
-    }, []);
+    }, [focusTarget]);
 
     // No session handling – items will be saved standalone
 
@@ -169,8 +193,23 @@ export default function ScanPage() {
         const matchedItems = matched.map(it => ({ text: it.text, status: 'matched' as const }));
         
         // Order: Unmatched first, then Missing, then Matched
-        return [...unmatchedItems, ...missingItems, ...matchedItems];
-    }, [unmatched, missing, matched]);
+        let list = [...unmatchedItems, ...missingItems, ...matchedItems];
+        
+        // Apply search filter if search query exists - match by last 3 digits
+        if (searchQuery.trim()) {
+            const query = searchQuery.trim().toUpperCase();
+            // Extract last 3 characters from search query (or all if less than 3)
+            const searchSuffix = query.length >= 3 ? query.slice(-3) : query;
+            list = list.filter(item => {
+                const itemUpper = item.text.toUpperCase();
+                // Get last 3 characters of item text
+                const itemSuffix = itemUpper.length >= 3 ? itemUpper.slice(-3) : itemUpper;
+                return itemSuffix === searchSuffix;
+            });
+        }
+        
+        return list;
+    }, [unmatched, missing, matched, searchQuery]);
 
     const clearScanDatabase = useCallback(async () => {
         if (!confirm("스캔 데이터베이스를 모두 삭제할까요? 이 작업은 되돌릴 수 없습니다.")) return;
@@ -188,6 +227,15 @@ export default function ScanPage() {
             setStatus(`Clear failed: ${msg}`);
         }
     }, [loadExpectedCache]);
+
+    // Handle double-click on list items to mark as scanned
+    const handleItemDoubleClick = useCallback((text: string, status: 'unmatched' | 'missing' | 'matched') => {
+        // Only process missing items (expected but not scanned) and unmatched items
+        if (status === 'missing' || status === 'unmatched') {
+            addItem(text);
+            setStatus(`Added: ${text}`);
+        }
+    }, [addItem]);
 
     return (
 		<div className="w-full max-w-full mx-auto space-y-3 px-2 sm:px-4">
@@ -232,6 +280,46 @@ export default function ScanPage() {
 					)}
 				</div>
 				
+				{/* Focus target selection */}
+				<div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+					<label className="text-sm sm:text-base text-gray-600 whitespace-nowrap">Auto Focus:</label>
+					<div className="flex gap-3 sm:gap-4">
+						<label className="flex items-center gap-2 text-sm sm:text-base text-gray-600 cursor-pointer">
+							<input 
+								type="radio" 
+								name="focusTarget" 
+								value="barcode"
+								checked={focusTarget === "barcode"} 
+								onChange={(e) => setFocusTarget("barcode")} 
+								className="w-4 h-4"
+							/>
+							<span>Barcode</span>
+						</label>
+						<label className="flex items-center gap-2 text-sm sm:text-base text-gray-600 cursor-pointer">
+							<input 
+								type="radio" 
+								name="focusTarget" 
+								value="search"
+								checked={focusTarget === "search"} 
+								onChange={(e) => setFocusTarget("search")} 
+								className="w-4 h-4"
+							/>
+							<span>Search</span>
+						</label>
+						<label className="flex items-center gap-2 text-sm sm:text-base text-gray-600 cursor-pointer">
+							<input 
+								type="radio" 
+								name="focusTarget" 
+								value="none"
+								checked={focusTarget === "none"} 
+								onChange={(e) => setFocusTarget("none")} 
+								className="w-4 h-4"
+							/>
+							<span>None</span>
+						</label>
+					</div>
+				</div>
+				
 				{/* Buttons - full width on mobile, wrapped */}
 				<div className="flex flex-wrap gap-2">
 					<button onClick={loadExpectedCache} className="flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800">Refresh expected</button>
@@ -254,9 +342,41 @@ export default function ScanPage() {
                 />
             </div>
             <div className="rounded border bg-white p-3 sm:p-4">
+                <label className="block text-base sm:text-sm text-gray-800 mb-2 font-semibold">검색</label>
+                <input
+                    ref={searchInputRef}
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onFocus={() => {
+                        // When search input is focused, don't let other input steal focus
+                    }}
+                    onBlur={() => {
+                        // When search input loses focus, return focus based on focusTarget setting
+                        if (focusTarget === "barcode") {
+                            setTimeout(() => {
+                                if (document.activeElement !== searchInputRef.current) {
+                                    inputRef.current?.focus();
+                                }
+                            }, 100);
+                        } else if (focusTarget === "search") {
+                            // Keep focus on search if that's the target
+                            setTimeout(() => {
+                                if (document.activeElement !== inputRef.current && document.activeElement !== searchInputRef.current) {
+                                    searchInputRef.current?.focus();
+                                }
+                            }, 100);
+                        }
+                    }}
+                    className="w-full rounded border px-4 py-3 text-base font-mono text-gray-900 placeholder-gray-500 bg-blue-50 border-blue-300 focus:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    placeholder="검색어를 입력하세요..."
+                    autoComplete="off"
+                />
+            </div>
+            <div className="rounded border bg-white p-3 sm:p-4">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-3 gap-2">
                     <h2 className="font-medium text-base sm:text-sm">
-                        List ({unifiedList.length})
+                        List ({unifiedList.length}){searchQuery && ` (검색: "${searchQuery}")`}
                     </h2>
                     <div className="flex flex-wrap gap-2 sm:gap-3 text-xs sm:text-sm">
                         <span className="text-orange-600 font-semibold">Unmatched: {unmatched.length}</span>
@@ -281,7 +401,12 @@ export default function ScanPage() {
                         }
                         
                         return (
-                            <li key={`${item.text}-${idx}`} className={`rounded border px-4 py-3 sm:px-3 sm:py-2 text-base sm:text-sm font-mono ${bgColor} ${textColor} ${borderColor}`}>
+                            <li 
+                                key={`${item.text}-${idx}`} 
+                                className={`rounded border px-4 py-3 sm:px-3 sm:py-2 text-base sm:text-sm font-mono ${bgColor} ${textColor} ${borderColor} ${item.status === 'missing' || item.status === 'unmatched' ? 'cursor-pointer hover:opacity-80 active:opacity-60' : ''}`}
+                                onDoubleClick={() => handleItemDoubleClick(item.text, item.status)}
+                                title={item.status === 'missing' || item.status === 'unmatched' ? '더블 클릭하여 스캔된 것으로 표시' : ''}
+                            >
                                 {item.text}
                             </li>
                         );

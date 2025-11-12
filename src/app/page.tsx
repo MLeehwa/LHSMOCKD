@@ -17,6 +17,42 @@ export default function UploadPage() {
 
 // confidence formatting removed from UI; keep function out to avoid unused warnings
 
+	// Post-process OCR text to fix common misrecognitions, especially 8 and 9
+	function postProcessOcrText(text: string): string {
+		if (!text) return text;
+		// Common OCR misrecognitions for numbers
+		// Fix 8/9 misrecognitions: B->8, S->5, O->0, but be careful with context
+		let processed = text;
+		
+		// Pattern-based fixes for common barcode-like strings
+		// If text looks like a barcode (alphanumeric, starts with prefix), apply fixes
+		// Replace B with 8 in numeric contexts (but keep B in letter contexts)
+		processed = processed.replace(/(\d)B(\d)/g, '$18$2'); // B between numbers -> 8
+		processed = processed.replace(/B(\d{2,})/g, '8$1'); // B followed by 2+ digits -> 8
+		processed = processed.replace(/(\d{2,})B/g, '$18'); // 2+ digits followed by B -> 8
+		
+		// Replace S with 5 in numeric contexts
+		processed = processed.replace(/(\d)S(\d)/g, '$15$2'); // S between numbers -> 5
+		processed = processed.replace(/S(\d{2,})/g, '5$1'); // S followed by 2+ digits -> 5
+		processed = processed.replace(/(\d{2,})S/g, '$15'); // 2+ digits followed by S -> 5
+		
+		// Replace O with 0 in numeric contexts (but keep O in letter contexts)
+		processed = processed.replace(/(\d)O(\d)/g, '$10$2'); // O between numbers -> 0
+		processed = processed.replace(/O(\d{2,})/g, '0$1'); // O followed by 2+ digits -> 0
+		processed = processed.replace(/(\d{2,})O/g, '$10'); // 2+ digits followed by O -> 0
+		
+		// Fix common 8/9 misrecognitions
+		// If we see patterns like "2M8" where 8 might be B, or "2M9" where 9 might be something else
+		// More aggressive: in barcode-like strings (alphanumeric), fix common patterns
+		if (/^[A-Z0-9]{6,}$/.test(processed)) {
+			// Looks like a barcode - apply more aggressive fixes
+			processed = processed.replace(/B(?=\d)/g, '8'); // B before digit -> 8
+			processed = processed.replace(/(?<=\d)B/g, '8'); // B after digit -> 8
+		}
+		
+		return processed;
+	}
+
 	function buildLineResultsFromWords(words: Array<{ text: string; confidence?: number; bbox?: { y0: number; y1: number } }>, include: (t: string) => boolean): OcrLine[] {
 		if (!words || words.length === 0) return [];
 		// Group words by approximate baseline (y position). Tesseract gives bbox; use y0 with a small tolerance.
@@ -40,7 +76,8 @@ export default function UploadPage() {
 			}
 		}
 		const results: OcrLine[] = groups.map(g => {
-			const text = g.map(w => w.text.trim()).join(" ").trim();
+			let text = g.map(w => w.text.trim()).join(" ").trim();
+			text = postProcessOcrText(text); // Apply post-processing
 			const confidences = g.map(w => (typeof w.confidence === "number" ? w.confidence! : 0));
 			const conf = confidences.length ? confidences.reduce((a, b) => a + b, 0) / confidences.length : 0;
 			return { text, confidence: conf };
@@ -145,7 +182,7 @@ export default function UploadPage() {
             let extracted: OcrLine[];
             if (structuredLines && structuredLines.length > 0) {
                 extracted = structuredLines
-                    .map(l => ({ text: (l.text || "").trim(), confidence: l.confidence ?? 0 }))
+                    .map(l => ({ text: postProcessOcrText((l.text || "").trim()), confidence: l.confidence ?? 0 }))
                     .filter(l => l.text.length > 0)
                     .filter(l => shouldInclude(l.text));
             } else {
@@ -166,7 +203,7 @@ export default function UploadPage() {
                         : [];
                     extracted = textLines
                         .filter(shouldInclude)
-                        .map(t => ({ text: t, confidence: 0 }));
+                        .map(t => ({ text: postProcessOcrText(t), confidence: 0 }));
                 }
             }
             setLines(extracted);
@@ -235,7 +272,7 @@ export default function UploadPage() {
                 let pageExtracted: OcrLine[];
                 if (structuredLinesPdf && structuredLinesPdf.length > 0) {
                     pageExtracted = structuredLinesPdf
-                        .map(l => ({ text: (l.text || "").trim(), confidence: l.confidence ?? 0 }))
+                        .map(l => ({ text: postProcessOcrText((l.text || "").trim()), confidence: l.confidence ?? 0 }))
                         .filter(l => l.text.length > 0)
                         .filter(l => shouldInclude(l.text));
                 } else {
@@ -256,7 +293,7 @@ export default function UploadPage() {
                             : [];
                         pageExtracted = textLines
                             .filter(shouldInclude)
-                            .map(t => ({ text: t, confidence: 0 }));
+                            .map(t => ({ text: postProcessOcrText(t), confidence: 0 }));
                     }
                 }
                 allExtracted.push(...pageExtracted);
