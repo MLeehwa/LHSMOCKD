@@ -21,7 +21,6 @@ export default function ScanPage() {
     const expectedCacheRef = useRef<Set<string>>(new Set());
     const seenRef = useRef<Set<string>>(new Set());
     const [expectedList, setExpectedList] = useState<string[]>([]); // Store full expected list for display
-    const [focusTarget, setFocusTarget] = useState<"barcode" | "none">("none"); // Which input to auto-focus (default "none" for PDA)
     const pathname = usePathname();
     const hasUnsavedData = useRef<boolean>(false); // Track if there's unsaved data
 
@@ -35,16 +34,26 @@ export default function ScanPage() {
     }, [allowedPrefixes]);
 
     const addItem = useCallback(async (text: string) => {
+        if (!text || text.trim().length === 0) return;
         const normalized = normalizeBarcode(text);
-        if (!shouldInclude(normalized)) return;
-        if (seenRef.current.has(normalized)) return;
+        if (!normalized || normalized.length === 0) return;
+        if (!shouldInclude(normalized)) {
+            setStatus(`Skipped: ${normalized} (doesn't match prefix)`);
+            return;
+        }
+        if (seenRef.current.has(normalized)) {
+            setStatus(`Already scanned: ${normalized}`);
+            return;
+        }
         seenRef.current.add(normalized);
         // Fast path: local cache lookup (no network)
         const exists = expectedCacheRef.current.has(normalized);
         if (exists) {
             setMatched(prev => [...prev, { text: normalized }]);
+            setStatus(`Matched: ${normalized}`);
         } else {
             setUnmatched(prev => [...prev, { text: normalized }]);
+            setStatus(`Unmatched: ${normalized}`);
         }
         hasUnsavedData.current = true; // Mark as having unsaved data
 
@@ -61,22 +70,33 @@ export default function ScanPage() {
         }
     }, [autoUpload, prefixText, shouldInclude]);
 
-    // Focus input based on selected focus target
+    // Always focus barcode input for scanning (1층 스캔)
     useEffect(() => {
-        if (focusTarget === "barcode") {
+        // Focus barcode input on mount and keep it focused
+        const focusBarcode = () => {
             inputRef.current?.focus();
-        }
-        // If focusTarget is "none", don't auto-focus
-        
-        const onFocus = () => {
-            if (focusTarget === "barcode") {
-                inputRef.current?.focus();
-            }
-            // If focusTarget is "none", do nothing
         };
+        
+        // Focus immediately
+        setTimeout(focusBarcode, 100);
+        
+        // Keep focus on barcode input when clicking anywhere
+        const onFocus = () => {
+            // Only refocus if not already focused on barcode input
+            if (document.activeElement !== inputRef.current) {
+                focusBarcode();
+            }
+        };
+        
         window.addEventListener("click", onFocus);
-        return () => window.removeEventListener("click", onFocus);
-    }, [focusTarget]);
+        // Also refocus when window regains focus (e.g., after scanning)
+        window.addEventListener("focus", focusBarcode);
+        
+        return () => {
+            window.removeEventListener("click", onFocus);
+            window.removeEventListener("focus", focusBarcode);
+        };
+    }, []);
 
     // No session handling – items will be saved standalone
 
@@ -286,35 +306,6 @@ export default function ScanPage() {
 					)}
 				</div>
 				
-				{/* Focus target selection */}
-				<div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
-					<label className="text-sm sm:text-base text-gray-600 whitespace-nowrap">Auto Focus:</label>
-					<div className="flex gap-3 sm:gap-4">
-						<label className="flex items-center gap-2 text-sm sm:text-base text-gray-600 cursor-pointer">
-							<input 
-								type="radio" 
-								name="focusTarget" 
-								value="barcode"
-								checked={focusTarget === "barcode"} 
-								onChange={(e) => setFocusTarget("barcode")} 
-								className="w-4 h-4"
-							/>
-							<span>Barcode</span>
-						</label>
-						<label className="flex items-center gap-2 text-sm sm:text-base text-gray-600 cursor-pointer">
-							<input 
-								type="radio" 
-								name="focusTarget" 
-								value="none"
-								checked={focusTarget === "none"} 
-								onChange={(e) => setFocusTarget("none")} 
-								className="w-4 h-4"
-							/>
-							<span>None</span>
-						</label>
-					</div>
-				</div>
-				
 				{/* Buttons - full width on mobile, wrapped - PDA touch-friendly */}
 				<div className="flex flex-wrap gap-2">
 					<button onClick={loadExpectedCache} className="flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800 touch-manipulation min-h-[44px]">Refresh expected</button>
@@ -328,13 +319,14 @@ export default function ScanPage() {
                 <label className="block text-base sm:text-sm text-gray-800 mb-2 font-semibold">Barcode</label>
                 <input
                     ref={inputRef}
+                    type="text"
                     value={currentCode}
                     onChange={(e) => setCurrentCode(e.target.value)}
                     onKeyDown={handleKey}
                     className="w-full rounded border px-4 py-4 sm:py-3 text-lg sm:text-base font-mono text-gray-900 placeholder-gray-500 bg-amber-50 border-amber-300 focus:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-400"
                     placeholder="Focus here and scan..."
                     autoComplete="off"
-                    inputMode="none"
+                    autoFocus
                 />
             </div>
             <div className="rounded border bg-white p-3 sm:p-4">
