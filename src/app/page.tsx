@@ -181,65 +181,89 @@ export default function UploadPage() {
 
             const arrayBuffer = await file.arrayBuffer();
             const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
-            const page = await pdf.getPage(1);
-            const viewport = page.getViewport({ scale: 2 });
-            const canvas = document.createElement("canvas");
-            const ctx = canvas.getContext("2d");
-            if (!ctx) {
-                setStatus("Failed to get canvas context.");
+            const numPages = pdf.numPages;
+            
+            if (numPages === 0) {
+                setStatus("PDF has no pages.");
                 return;
             }
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
-            setStatus("Rendering PDF page...");
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await page.render({ canvasContext: ctx as any, viewport: viewport as any, canvas } as any).promise;
 
-            const dataUrl = canvas.toDataURL("image/png");
-            setImageUrl(dataUrl);
+            setStatus(`Processing ${numPages} page(s)...`);
+            
+            // Process all pages and combine results
+            const allExtracted: OcrLine[] = [];
 
-            setStatus("Running OCR...");
-            const { data } = await Tesseract.recognize(canvas, "kor+eng", {
-                logger: (m) => {
-                    if (m.status === "recognizing text" && m.progress) {
-                        setProgress(Math.round(m.progress * 100));
-                    }
-                    setStatus(m.status);
-                },
-            });
-
-            // Prefer structured lines with confidence, fallback to words grouping, then text split
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const structuredLinesPdf = (data as any)?.lines as Array<{ text: string; confidence: number }>|undefined;
-            let extracted: OcrLine[];
-            if (structuredLinesPdf && structuredLinesPdf.length > 0) {
-                extracted = structuredLinesPdf
-                    .map(l => ({ text: (l.text || "").trim(), confidence: l.confidence ?? 0 }))
-                    .filter(l => l.text.length > 0)
-                    .filter(l => shouldInclude(l.text));
-            } else {
-                // Try grouping words into lines to compute confidence
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const words = ((data as any)?.words as Array<any>)?.map(w => ({ text: w.text, confidence: w.confidence, bbox: w.bbox })) ?? [];
-                const fromWords = buildLineResultsFromWords(words, shouldInclude);
-                if (fromWords.length > 0) {
-                    extracted = fromWords;
-                } else {
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const textLines: string[] = (data as any)?.text
-                        ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                          String((data as any).text)
-                            .split("\n")
-                            .map(t => t.trim())
-                            .filter(Boolean)
-                        : [];
-                    extracted = textLines
-                        .filter(shouldInclude)
-                        .map(t => ({ text: t, confidence: 0 }));
+            for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+                setStatus(`Processing page ${pageNum} of ${numPages}...`);
+                const page = await pdf.getPage(pageNum);
+                const viewport = page.getViewport({ scale: 2 });
+                const canvas = document.createElement("canvas");
+                const ctx = canvas.getContext("2d");
+                if (!ctx) {
+                    setStatus(`Failed to get canvas context for page ${pageNum}.`);
+                    continue;
                 }
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                
+                setStatus(`Rendering PDF page ${pageNum} of ${numPages}...`);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                await page.render({ canvasContext: ctx as any, viewport: viewport as any, canvas } as any).promise;
+
+                // Store the last page for preview
+                if (pageNum === numPages) {
+                    const dataUrl = canvas.toDataURL("image/png");
+                    setImageUrl(dataUrl);
+                }
+
+                setStatus(`Running OCR on page ${pageNum} of ${numPages}...`);
+                const { data } = await Tesseract.recognize(canvas, "kor+eng", {
+                    logger: (m) => {
+                        if (m.status === "recognizing text" && m.progress) {
+                            // Calculate overall progress across all pages
+                            const pageProgress = m.progress;
+                            const overallProgress = ((pageNum - 1) + pageProgress) / numPages;
+                            setProgress(Math.round(overallProgress * 100));
+                        }
+                        setStatus(`${m.status} (page ${pageNum}/${numPages})`);
+                    },
+                });
+
+                // Prefer structured lines with confidence, fallback to words grouping, then text split
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const structuredLinesPdf = (data as any)?.lines as Array<{ text: string; confidence: number }>|undefined;
+                let pageExtracted: OcrLine[];
+                if (structuredLinesPdf && structuredLinesPdf.length > 0) {
+                    pageExtracted = structuredLinesPdf
+                        .map(l => ({ text: (l.text || "").trim(), confidence: l.confidence ?? 0 }))
+                        .filter(l => l.text.length > 0)
+                        .filter(l => shouldInclude(l.text));
+                } else {
+                    // Try grouping words into lines to compute confidence
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const words = ((data as any)?.words as Array<any>)?.map(w => ({ text: w.text, confidence: w.confidence, bbox: w.bbox })) ?? [];
+                    const fromWords = buildLineResultsFromWords(words, shouldInclude);
+                    if (fromWords.length > 0) {
+                        pageExtracted = fromWords;
+                    } else {
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const textLines: string[] = (data as any)?.text
+                            ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                              String((data as any).text)
+                                .split("\n")
+                                .map(t => t.trim())
+                                .filter(Boolean)
+                            : [];
+                        pageExtracted = textLines
+                            .filter(shouldInclude)
+                            .map(t => ({ text: t, confidence: 0 }));
+                    }
+                }
+                allExtracted.push(...pageExtracted);
             }
-			setLines(extracted);
-            setStatus("Done");
+            
+            setLines(allExtracted);
+            setStatus(`Done - Processed ${numPages} page(s)`);
 		} else {
 			setImageUrl(null);
             setStatus("Unsupported file type.");
