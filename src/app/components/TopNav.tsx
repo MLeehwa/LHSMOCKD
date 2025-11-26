@@ -16,7 +16,7 @@ export default function TopNav() {
 	return (
 		<nav className="sticky top-0 z-50 w-full bg-white border-b-2 border-gray-300 shadow-md">
 			<div className="flex items-center justify-between px-3 sm:px-6 py-3 sm:py-4">
-				<div className="text-lg sm:text-xl font-bold text-gray-900">OCR Demo</div>
+				<div className="text-lg sm:text-xl font-bold text-gray-900">LEEHWA-MGA</div>
 				<div className="flex gap-2 sm:gap-3">
 					{nav.map(({ href, label }) => {
 						const active = pathname === href;

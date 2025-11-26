@@ -311,12 +311,13 @@ export default function CameraOcrPage() {
                                     type="text"
                                     value={item.text}
                                     onChange={(e) => handleItemEdit(index, e.target.value)}
-                                    className={`flex-1 px-3 py-2 rounded border font-mono text-base ${
+                                    className={`flex-1 px-3 py-2 rounded border font-mono text-base font-bold text-black ${
                                         item.edited 
                                             ? "bg-yellow-50 border-yellow-400" 
                                             : "bg-white border-gray-300"
                                     }`}
                                     placeholder="2M으로 시작하는 번호"
+                                    style={{ color: '#000000', fontWeight: 'bold' }}
                                 />
                                 <button
                                     onClick={() => handleItemDelete(index)}
