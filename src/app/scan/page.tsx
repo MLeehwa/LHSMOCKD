@@ -1,28 +1,24 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { usePathname } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
 import { normalizeBarcode } from "../../lib/barcode";
 
 type ScanItem = { text: string };
 
 export default function ScanPage() {
-    const [prefixText, setPrefixText] = useState<string>("2M");
-    const [autoUpload, setAutoUpload] = useState<boolean>(false);
+    const [prefixText] = useState<string>("2M"); // Keep for filtering, but don't show UI
     const [matched, setMatched] = useState<ScanItem[]>([]);
     const [unmatched, setUnmatched] = useState<ScanItem[]>([]);
     const [status, setStatus] = useState<string>("");
-    const [uploading, setUploading] = useState<boolean>(false);
     const inputRef = useRef<HTMLInputElement | null>(null);
     const [currentCode, setCurrentCode] = useState<string>("");
-    const [autoSubmit, setAutoSubmit] = useState<boolean>(true);
-    const [submitDelayMs, setSubmitDelayMs] = useState<number>(200);
+    const [autoSubmit] = useState<boolean>(true); // Always enabled, no UI
+    const [submitDelayMs] = useState<number>(200); // Fixed delay, no UI
     const submitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const expectedCacheRef = useRef<Set<string>>(new Set());
     const seenRef = useRef<Set<string>>(new Set());
     const [expectedList, setExpectedList] = useState<string[]>([]); // Store full expected list for display
-    const pathname = usePathname();
-    const hasUnsavedData = useRef<boolean>(false); // Track if there's unsaved data
+    const hasUnsavedData = useRef<boolean>(false); // Track if there's unsaved data (for error handling)
 
     const allowedPrefixes = useCallback(() =>
         prefixText.split(",").map(p => p.trim()).filter(Boolean), [prefixText]);
@@ -46,8 +42,12 @@ export default function ScanPage() {
             return;
         }
         seenRef.current.add(normalized);
+        
         // Fast path: local cache lookup (no network)
         const exists = expectedCacheRef.current.has(normalized);
+        const isMatched = exists;
+        
+        // Update UI immediately
         if (exists) {
             setMatched(prev => [...prev, { text: normalized }]);
             setStatus(`Matched: ${normalized}`);
@@ -55,20 +55,26 @@ export default function ScanPage() {
             setUnmatched(prev => [...prev, { text: normalized }]);
             setStatus(`Unmatched: ${normalized}`);
         }
-        hasUnsavedData.current = true; // Mark as having unsaved data
-
-        if (autoUpload) {
-            try {
-                await supabase.from("mo_ocr_results").upsert(
-                    [{ text: normalized, prefixes: prefixText, confidence: 0 }],
-                    { onConflict: "text" }
-                );
-            } catch (e) {
-                const msg = e instanceof Error ? e.message : String(e);
-                setStatus(`Auto-upload failed: ${msg}`);
-            }
+        
+        // Save to DB immediately on scan
+        try {
+            const payload = [{
+                text: normalized,
+                prefixes: prefixText,
+                matched: isMatched
+            }];
+            
+            await supabase
+                .from("mo_scan_items")
+                .upsert(payload, { onConflict: "text" });
+            
+            hasUnsavedData.current = false; // Mark as saved
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setStatus(`Save failed: ${msg}`);
+            hasUnsavedData.current = true; // Mark as unsaved on error
         }
-    }, [autoUpload, prefixText, shouldInclude]);
+    }, [prefixText, shouldInclude]);
 
     // Always focus barcode input for scanning (1층 스캔)
     useEffect(() => {
@@ -143,7 +149,7 @@ export default function ScanPage() {
             }
             expectedCacheRef.current = set;
             setExpectedList(list.sort());
-            setStatus(`Expected list loaded: ${set.size}`);
+            // Don't show status message for expected list loading
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             setStatus(`Load expected failed: ${msg}`);
@@ -194,89 +200,13 @@ export default function ScanPage() {
         void loadScannedItems(); 
     }, [loadScannedItems]);
 
-    const uploadBatch = useCallback(async () => {
-        const items = [...matched, ...unmatched];
-        if (items.length === 0) return;
-        setUploading(true);
-        try {
-            // Save items into mo_scan_items with matched flag
-            const seen = new Set<string>();
-            const payload = items.filter(i => {
-                if (seen.has(i.text)) return false;
-                seen.add(i.text);
-                return true;
-            }).map(i => ({ text: i.text, prefixes: prefixText, matched: matched.some(m => m.text === i.text) }));
+    // uploadBatch removed - items are saved immediately on scan
 
-            const { error } = await supabase
-                .from("mo_scan_items")
-                .upsert(payload, { onConflict: "text" });
-            if (error) throw error;
-            setStatus(`Saved ${payload.length} items to DB`);
-            hasUnsavedData.current = false; // Mark as saved
-            // Keep UI lists - don't clear so counts remain visible
-        } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            setStatus(`Upload failed: ${msg}`);
-        } finally {
-            setUploading(false);
-        }
-    }, [matched, unmatched, prefixText]);
+    // clearList removed - not needed for PDA usage
 
-    const clearList = useCallback(() => {
-        seenRef.current.clear();
-        setMatched([]);
-        setUnmatched([]);
-        setCurrentCode("");
-        setStatus("");
-        hasUnsavedData.current = false;
-        inputRef.current?.focus();
-    }, []);
+    // Auto-save function removed - items are saved immediately on scan
 
-    // Auto-save function (reusable)
-    const autoSaveData = useCallback(async () => {
-        if (!hasUnsavedData.current) return;
-        const items = [...matched, ...unmatched];
-        if (items.length === 0) return;
-        
-        try {
-            const seen = new Set<string>();
-            const payload = items.filter(i => {
-                if (seen.has(i.text)) return false;
-                seen.add(i.text);
-                return true;
-            }).map(i => ({ text: i.text, prefixes: prefixText, matched: matched.some(m => m.text === i.text) }));
-
-            await supabase
-                .from("mo_scan_items")
-                .upsert(payload, { onConflict: "text" });
-            hasUnsavedData.current = false;
-            // Don't show status message for auto-save to avoid UI spam
-            // Status will only show on manual save or errors
-        } catch (e) {
-            console.error("Auto-save failed:", e);
-        }
-    }, [matched, unmatched, prefixText]);
-
-    // Periodic auto-save (every 5 seconds if there's unsaved data)
-    useEffect(() => {
-        if (!hasUnsavedData.current) return;
-        
-        const interval = setInterval(() => {
-            if (hasUnsavedData.current && (matched.length > 0 || unmatched.length > 0)) {
-                autoSaveData();
-            }
-        }, 5000); // Auto-save every 5 seconds
-        
-        return () => clearInterval(interval);
-    }, [matched, unmatched, autoSaveData]);
-
-    // Auto-save when navigating away from scan page
-    useEffect(() => {
-        // Save when pathname changes away from /scan
-        if (pathname !== "/scan" && hasUnsavedData.current && (matched.length > 0 || unmatched.length > 0)) {
-            autoSaveData();
-        }
-    }, [pathname, matched, unmatched, autoSaveData]);
+    // No need for periodic auto-save - items are saved immediately on scan
 
     // Calculate missing items (expected but not scanned yet)
     const missing = expectedList.filter(text => !seenRef.current.has(text));
@@ -294,22 +224,7 @@ export default function ScanPage() {
         return [...unmatchedItems, ...missingItems, ...matchedItems];
     }, [unmatched, missing, matched]);
 
-    const clearScanDatabase = useCallback(async () => {
-        if (!confirm("스캔 데이터베이스를 모두 삭제할까요? 이 작업은 되돌릴 수 없습니다.")) return;
-        try {
-            const { error } = await supabase
-                .from("mo_scan_items")
-                .delete()
-                .gt("id", 0); // delete all rows
-            if (error) throw error;
-            setStatus("Scan database cleared");
-            // Also reload expected cache after clearing
-            await loadExpectedCache();
-        } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            setStatus(`Clear failed: ${msg}`);
-        }
-    }, [loadExpectedCache]);
+    // clearScanDatabase removed - not needed for PDA usage
 
 
     // Handle double-click on list items to mark as scanned
@@ -323,81 +238,50 @@ export default function ScanPage() {
 
     return (
 		<div className="w-full max-w-full mx-auto space-y-3 px-2 sm:px-4">
-			<h1 className="text-2xl sm:text-3xl font-semibold">1층 스캔</h1>
-			{status && (
-				<div className="rounded border bg-white p-3 text-sm sm:text-base text-gray-700">{status}</div>
-			)}
-			{/* Mobile-optimized controls */}
-			<div className="space-y-3">
-				{/* Prefix input - full width on mobile */}
-				<div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
-					<label htmlFor="prefixes" className="text-sm sm:text-base text-gray-600 whitespace-nowrap">Allowed prefixes</label>
-					<input
-						id="prefixes"
-						value={prefixText}
-						onChange={(e) => setPrefixText(e.target.value)}
-						className="w-full sm:w-auto rounded border px-3 py-2.5 text-base sm:text-sm"
-					/>
+			<h1 className="text-xl sm:text-2xl font-semibold">1층 스캔</h1>
+			
+			{/* Scan Count Cards */}
+			<div className="grid grid-cols-3 gap-2 sm:gap-3">
+				<div className="rounded-lg border-2 border-emerald-400 bg-emerald-50 p-3 sm:p-4 shadow-md">
+					<div className="text-xs sm:text-sm text-emerald-700 font-medium mb-1">Matched</div>
+					<div className="text-2xl sm:text-3xl font-bold text-emerald-800">{matched.length}</div>
 				</div>
-				
-				{/* Checkboxes - stacked on mobile */}
-				<div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
-					<label className="flex items-center gap-2 text-sm sm:text-base text-gray-600">
-						<input type="checkbox" checked={autoUpload} onChange={(e) => setAutoUpload(e.target.checked)} className="w-5 h-5" />
-						<span>Auto upload</span>
-					</label>
-					<label className="flex items-center gap-2 text-sm sm:text-base text-gray-600">
-						<input type="checkbox" checked={autoSubmit} onChange={(e) => setAutoSubmit(e.target.checked)} className="w-5 h-5" />
-						<span>Auto submit (no Enter)</span>
-					</label>
-					{autoSubmit && (
-						<div className="flex items-center gap-2">
-							<label className="text-sm sm:text-base text-gray-600">Delay (ms):</label>
-							<input
-								type="number"
-								value={submitDelayMs}
-								onChange={(e) => setSubmitDelayMs(Number(e.target.value) || 200)}
-								className="w-24 rounded border px-2 py-2.5 text-base sm:text-sm"
-								title="Auto submit delay (ms)"
-							/>
-						</div>
-					)}
+				<div className="rounded-lg border-2 border-orange-400 bg-orange-50 p-3 sm:p-4 shadow-md">
+					<div className="text-xs sm:text-sm text-orange-700 font-medium mb-1">Unmatched</div>
+					<div className="text-2xl sm:text-3xl font-bold text-orange-800">{unmatched.length}</div>
 				</div>
-				
-				{/* Buttons - full width on mobile, wrapped - PDA touch-friendly */}
-				<div className="flex flex-wrap gap-2">
-					<button onClick={loadExpectedCache} className="flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800 touch-manipulation min-h-[44px]">Refresh expected</button>
-					<button onClick={uploadBatch} disabled={(matched.length+unmatched.length)===0 || uploading} className={`flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm touch-manipulation min-h-[44px] ${(matched.length+unmatched.length)===0 || uploading ? "bg-gray-300 text-gray-500" : "bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-800"}`}>{uploading?"Saving...":"Save"}</button>
-					<button onClick={clearList} className="flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm bg-gray-200 text-gray-800 hover:bg-gray-300 active:bg-gray-400 touch-manipulation min-h-[44px]">Clear list</button>
-					<button onClick={clearScanDatabase} className="flex-1 sm:flex-none rounded px-4 py-3 sm:py-2 text-base sm:text-sm bg-red-200 text-red-800 hover:bg-red-300 active:bg-red-400 touch-manipulation min-h-[44px]">Clear Scan DB</button>
+				<div className="rounded-lg border-2 border-gray-400 bg-gray-50 p-3 sm:p-4 shadow-md">
+					<div className="text-xs sm:text-sm text-gray-700 font-medium mb-1">Missing</div>
+					<div className="text-2xl sm:text-3xl font-bold text-gray-800">{missing.length}</div>
 				</div>
 			</div>
 
-            <div className="rounded border bg-gray-50 p-3 sm:p-4">
-                <label className="block text-base sm:text-sm text-gray-800 mb-2 font-semibold">Barcode</label>
+			{/* Barcode input - compact size */}
+            <div className="rounded border border-amber-300 bg-amber-50 p-3">
+                <label className="block text-sm text-gray-800 mb-2 font-semibold">바코드 스캔</label>
                 <input
                     ref={inputRef}
                     type="text"
                     value={currentCode}
                     onChange={(e) => setCurrentCode(e.target.value)}
                     onKeyDown={handleKey}
-                    className="w-full rounded border px-4 py-4 sm:py-3 text-lg sm:text-base font-mono text-gray-900 placeholder-gray-500 bg-amber-50 border-amber-300 focus:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-400"
-                    placeholder="Focus here and scan..."
+                    className="w-full rounded border border-amber-400 px-3 py-3 text-lg font-mono text-gray-900 placeholder-gray-500 bg-white focus:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    placeholder="바코드를 스캔하세요..."
                     autoComplete="off"
                     autoFocus
                 />
             </div>
+
+			{/* Status message - only show important messages */}
+			{status && (status.includes("Added") || status.includes("Uploaded") || status.includes("failed") || status.includes("cleared") || status.includes("Loaded")) ? (
+				<div className="rounded border bg-white p-2 text-sm text-gray-700">{status}</div>
+			) : null}
+
+			{/* No save button needed - items are saved immediately on scan */}
             <div className="rounded border bg-white p-3 sm:p-4">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-3 gap-2">
-                    <h2 className="font-medium text-base sm:text-sm">
-                        List ({unifiedList.length})
-                    </h2>
-                    <div className="flex flex-wrap gap-2 sm:gap-3 text-xs sm:text-sm">
-                        <span className="text-orange-600 font-semibold">Unmatched: {unmatched.length}</span>
-                        <span className="text-gray-600 font-semibold">Missing: {missing.length}</span>
-                        <span className="text-emerald-600 font-semibold">Matched: {matched.length}</span>
-                    </div>
-                </div>
+                <h2 className="font-medium text-base sm:text-sm mb-3">
+                    List ({unifiedList.length})
+                </h2>
                 <ul className="space-y-2 max-h-[50vh] sm:max-h-96 overflow-auto touch-pan-y">
                     {unifiedList.map((item, idx) => {
                         let bgColor = "bg-gray-50";
