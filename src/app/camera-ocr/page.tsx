@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Tesseract from "tesseract.js";
 import { supabase } from "../../lib/supabaseClient";
 import { normalizeBarcode } from "../../lib/barcode";
@@ -8,6 +8,7 @@ type OcrItem = {
     text: string; 
     confidence: number;
     edited: boolean; // Whether the text has been manually edited
+    matched: boolean; // Whether this item exists in mo_ocr_results
 };
 
 export default function CameraOcrPage() {
@@ -17,6 +18,31 @@ export default function CameraOcrPage() {
     const [status, setStatus] = useState<string>("");
     const [uploading, setUploading] = useState<boolean>(false);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
+    const expectedCacheRef = useRef<Set<string>>(new Set()); // Cache for mo_ocr_results
+
+    // Load expected cache from mo_ocr_results
+    const loadExpectedCache = useCallback(async () => {
+        try {
+            const { data, error } = await supabase.from("mo_ocr_results").select("text");
+            if (error) throw error;
+            const set = new Set<string>();
+            for (const r of data ?? []) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const normalized = normalizeBarcode((r as any).text);
+                if (normalized && normalized.startsWith("2M")) {
+                    set.add(normalized);
+                }
+            }
+            expectedCacheRef.current = set;
+        } catch (e) {
+            console.error("Load expected cache failed:", e);
+        }
+    }, []);
+
+    // Load expected cache on mount
+    useEffect(() => {
+        void loadExpectedCache();
+    }, [loadExpectedCache]);
 
     // Preprocess image to improve OCR accuracy
     function preprocessImageForOCR(canvas: HTMLCanvasElement): HTMLCanvasElement {
@@ -166,11 +192,17 @@ export default function CameraOcrPage() {
             const uniqueMatches = Array.from(new Set(matches))
                 .filter(m => m.length === 14 && m.startsWith("2M"));
             
-            const extracted: OcrItem[] = uniqueMatches.map(match => ({
-                text: match,
-                confidence: 80, // Default confidence for pattern-matched items
-                edited: false
-            }));
+            // Check if each item exists in mo_ocr_results
+            const extracted: OcrItem[] = uniqueMatches.map(match => {
+                const normalized = normalizeBarcode(match);
+                const isMatched = expectedCacheRef.current.has(normalized);
+                return {
+                    text: match,
+                    confidence: 80, // Default confidence for pattern-matched items
+                    edited: false,
+                    matched: isMatched
+                };
+            });
 
             setItems(extracted);
             setStatus(`OCR 완료: ${extracted.length}개 항목 인식 (2M으로 시작하는 14자리만 추출)`);
@@ -188,11 +220,19 @@ export default function CameraOcrPage() {
     }, [handleFile]);
 
     const handleItemEdit = useCallback((index: number, newText: string) => {
-        setItems(prev => prev.map((item, i) => 
-            i === index 
-                ? { ...item, text: newText.toUpperCase(), edited: true }
-                : item
-        ));
+        setItems(prev => prev.map((item, i) => {
+            if (i === index) {
+                const normalized = normalizeBarcode(newText.toUpperCase());
+                const isMatched = expectedCacheRef.current.has(normalized);
+                return { 
+                    ...item, 
+                    text: newText.toUpperCase(), 
+                    edited: true,
+                    matched: isMatched
+                };
+            }
+            return item;
+        }));
     }, []);
 
     const handleItemDelete = useCallback((index: number) => {
@@ -302,9 +342,19 @@ export default function CameraOcrPage() {
             {items.length > 0 && (
                 <div className="rounded border bg-white p-4">
                     <div className="flex items-center justify-between mb-4">
-                        <h2 className="text-lg font-medium">
-                            인식된 항목 ({items.length}개) - 2M으로 시작하는 14자리만 표시
-                        </h2>
+                        <div>
+                            <h2 className="text-lg font-medium">
+                                인식된 항목 ({items.length}개) - 2M으로 시작하는 14자리만 표시
+                            </h2>
+                            <div className="flex gap-3 mt-2 text-xs">
+                                <span className="text-emerald-700 font-semibold">
+                                    매칭됨: {items.filter(i => i.matched).length}개
+                                </span>
+                                <span className="text-orange-700 font-semibold">
+                                    미매칭: {items.filter(i => !i.matched).length}개
+                                </span>
+                            </div>
+                        </div>
                         <button
                             onClick={handleConfirm}
                             disabled={uploading}
@@ -319,39 +369,63 @@ export default function CameraOcrPage() {
                     </div>
                     
                     <div className="space-y-2 max-h-[60vh] overflow-auto">
-                        {items.map((item, index) => (
-                            <div 
-                                key={index}
-                                className="flex items-center gap-2 p-3 border rounded bg-gray-50"
-                            >
-                                <input
-                                    type="text"
-                                    value={item.text}
-                                    onChange={(e) => handleItemEdit(index, e.target.value)}
-                                    className={`flex-1 px-3 py-2 rounded border font-mono text-base font-bold ${
-                                        item.edited 
-                                            ? "bg-yellow-50 border-yellow-400" 
-                                            : "bg-white border-gray-300"
-                                    }`}
-                                    placeholder="2M으로 시작하는 번호"
-                                    style={{ 
-                                        color: '#000000',
-                                        fontWeight: 'bold',
-                                        WebkitTextFillColor: '#000000',
-                                        caretColor: '#000000'
-                                    }}
-                                />
-                                <button
-                                    onClick={() => handleItemDelete(index)}
-                                    className="px-3 py-2 bg-red-500 text-white rounded hover:bg-red-600 active:bg-red-700"
+                        {items.map((item, index) => {
+                            // Determine background color based on match status
+                            let bgColor = "bg-gray-50";
+                            let borderColor = "border-gray-300";
+                            if (item.matched) {
+                                bgColor = "bg-emerald-50";
+                                borderColor = "border-emerald-300";
+                            } else {
+                                bgColor = "bg-orange-50";
+                                borderColor = "border-orange-300";
+                            }
+                            
+                            return (
+                                <div 
+                                    key={index}
+                                    className={`flex items-center gap-2 p-3 border rounded ${bgColor} ${borderColor}`}
                                 >
-                                    삭제
-                                </button>
-                                {item.edited && (
-                                    <span className="text-xs text-yellow-600">수정됨</span>
-                                )}
-                            </div>
-                        ))}
+                                    <input
+                                        type="text"
+                                        value={item.text}
+                                        onChange={(e) => handleItemEdit(index, e.target.value)}
+                                        className={`flex-1 px-3 py-2 rounded border font-mono text-base font-bold ${
+                                            item.edited 
+                                                ? "bg-yellow-50 border-yellow-400" 
+                                                : "bg-white border-gray-300"
+                                        }`}
+                                        placeholder="2M으로 시작하는 번호"
+                                        style={{ 
+                                            color: '#000000',
+                                            fontWeight: 'bold',
+                                            WebkitTextFillColor: '#000000',
+                                            caretColor: '#000000'
+                                        }}
+                                    />
+                                    <div className="flex items-center gap-2">
+                                        {item.matched ? (
+                                            <span className="text-xs font-semibold text-emerald-700 bg-emerald-100 px-2 py-1 rounded">
+                                                매칭됨
+                                            </span>
+                                        ) : (
+                                            <span className="text-xs font-semibold text-orange-700 bg-orange-100 px-2 py-1 rounded">
+                                                미매칭
+                                            </span>
+                                        )}
+                                        {item.edited && (
+                                            <span className="text-xs text-yellow-600">수정됨</span>
+                                        )}
+                                    </div>
+                                    <button
+                                        onClick={() => handleItemDelete(index)}
+                                        className="px-3 py-2 bg-red-500 text-white rounded hover:bg-red-600 active:bg-red-700"
+                                    >
+                                        삭제
+                                    </button>
+                                </div>
+                            );
+                        })}
                     </div>
                 </div>
             )}
