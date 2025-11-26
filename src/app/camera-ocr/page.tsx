@@ -17,7 +17,6 @@ export default function CameraOcrPage() {
     const [status, setStatus] = useState<string>("");
     const [uploading, setUploading] = useState<boolean>(false);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
-    const cameraInputRef = useRef<HTMLInputElement | null>(null);
 
     // Preprocess image to improve OCR accuracy
     function preprocessImageForOCR(canvas: HTMLCanvasElement): HTMLCanvasElement {
@@ -75,8 +74,34 @@ export default function CameraOcrPage() {
             const url = URL.createObjectURL(file);
             setImageUrl(url);
 
+            setStatus("Preprocessing image for better OCR...");
+            
+            // Create canvas for image preprocessing
+            const img = new Image();
+            img.src = URL.createObjectURL(file);
+            await new Promise((resolve, reject) => {
+                img.onload = resolve;
+                img.onerror = reject;
+            });
+            
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+                setStatus("Canvas context failed");
+                return;
+            }
+            
+            // Increase resolution for better OCR accuracy (scale 3 for camera images)
+            const scale = 3;
+            canvas.width = img.width * scale;
+            canvas.height = img.height * scale;
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            
+            // Preprocess image to improve OCR
+            const processedCanvas = preprocessImageForOCR(canvas);
+            
             setStatus("Running OCR...");
-            const { data } = await Tesseract.recognize(file, "kor+eng", {
+            const { data } = await Tesseract.recognize(processedCanvas, "eng", {
                 logger: (m) => {
                     if (m.status === "recognizing text" && m.progress) {
                         setProgress(Math.round(m.progress * 100));
@@ -85,71 +110,70 @@ export default function CameraOcrPage() {
                 },
             });
 
-            // Extract lines from OCR result
+            // Extract 2M codes (14 digits: 2M + 12 digits)
+            // Pattern: 2M followed by exactly 12 digits (total 14 characters)
+            // Use word boundary or space to ensure we only get exactly 14 characters
+            const pattern2M14 = /2M\d{12}(?=\s|$|[^0-9A-Za-z])/gi;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const allText = (data as any)?.text || "";
+            const processedText = postProcessOcrText(allText);
+            
+            // Find all 2M codes in the entire OCR text - extract only first 14 characters
+            const allMatches = processedText.match(/2M\d{12}/gi) || [];
+            const matches: string[] = allMatches.map(m => m.substring(0, 14).toUpperCase());
+            
+            // Also check structured lines and words for better accuracy
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const structuredLines = (data as any)?.lines as Array<{ text: string; confidence: number }>|undefined;
-            let extracted: OcrItem[];
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const words = ((data as any)?.words as Array<any>)?.map((w: any) => ({ text: w.text, confidence: w.confidence })) ?? [];
             
+            // Extract from structured lines
             if (structuredLines && structuredLines.length > 0) {
-                extracted = structuredLines
-                    .map(l => ({ 
-                        text: postProcessOcrText((l.text || "").trim()), 
-                        confidence: l.confidence ?? 0,
-                        edited: false
-                    }))
-                    .filter(l => l.text.length > 0)
-                    .filter(l => l.text.toUpperCase().startsWith("2M")); // Filter only 2M items
-            } else {
-                // Fallback: use words or text
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const words = ((data as any)?.words as Array<any>)?.map((w: any) => ({ text: w.text, confidence: w.confidence })) ?? [];
-                if (words.length > 0) {
-                    // Group words into lines
-                    const lines: OcrItem[] = [];
-                    let currentLine = "";
-                    let currentConfidence = 0;
-                    
-                    for (const word of words) {
-                        const wordText = postProcessOcrText(word.text || "");
-                        if (wordText.trim()) {
-                            if (currentLine) currentLine += " ";
-                            currentLine += wordText;
-                            currentConfidence = Math.max(currentConfidence, word.confidence || 0);
-                            
-                            // If line starts with 2M, add it
-                            if (currentLine.toUpperCase().startsWith("2M") && currentLine.length >= 6) {
-                                lines.push({
-                                    text: currentLine.trim(),
-                                    confidence: currentConfidence,
-                                    edited: false
-                                });
-                                currentLine = "";
-                                currentConfidence = 0;
-                            }
-                        }
+                for (const line of structuredLines) {
+                    const lineText = postProcessOcrText((line.text || "").trim());
+                    const lineMatches = lineText.match(/2M\d{12}/gi);
+                    if (lineMatches) {
+                        // Extract only first 14 characters from each match
+                        const extracted14 = lineMatches.map(m => m.substring(0, 14).toUpperCase());
+                        matches.push(...extracted14);
                     }
-                    
-                    extracted = lines;
-                } else {
-                    // Last fallback: split text by lines
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const textLines: string[] = (data as any)?.text
-                        ? String((data as any).text)
-                            .split("\n")
-                            .map((t: string) => postProcessOcrText(t.trim()))
-                            .filter((t: string) => t.length > 0 && t.toUpperCase().startsWith("2M"))
-                        : [];
-                    
-                    extracted = textLines.map(t => ({
-                        text: t,
-                        confidence: 0,
-                        edited: false
-                    }));
                 }
             }
+            
+            // Extract from words (group consecutive words that might form 2M codes)
+            if (words.length > 0) {
+                let wordSequence = "";
+                for (const word of words) {
+                    const wordText = postProcessOcrText(String(word.text || ""));
+                    wordSequence += wordText;
+                    // Check if sequence contains 2M code
+                    const seqMatches = wordSequence.match(/2M\d{12}/gi);
+                    if (seqMatches) {
+                        // Extract only first 14 characters from each match
+                        const extracted14 = seqMatches.map(m => m.substring(0, 14).toUpperCase());
+                        matches.push(...extracted14);
+                        wordSequence = ""; // Reset after finding a match
+                    }
+                    // Limit sequence length to avoid too long strings
+                    if (wordSequence.length > 20) {
+                        wordSequence = wordSequence.slice(-15); // Keep last 15 chars
+                    }
+                }
+            }
+            
+            // Remove duplicates and ensure exactly 14 characters
+            const uniqueMatches = Array.from(new Set(matches))
+                .filter(m => m.length === 14 && m.startsWith("2M"));
+            
+            const extracted: OcrItem[] = uniqueMatches.map(match => ({
+                text: match,
+                confidence: 80, // Default confidence for pattern-matched items
+                edited: false
+            }));
 
             setItems(extracted);
-            setStatus(`OCR 완료: ${extracted.length}개 항목 인식 (2M으로 시작하는 항목만)`);
+            setStatus(`OCR 완료: ${extracted.length}개 항목 인식 (2M으로 시작하는 14자리만 추출)`);
         } else {
             setImageUrl(null);
             setStatus("이미지 파일만 지원됩니다.");
@@ -246,36 +270,20 @@ export default function CameraOcrPage() {
 
             {/* File Upload Section */}
             <div className="rounded border bg-white p-4">
-                <div className="flex flex-col sm:flex-row gap-3">
-                    <label className="flex-1 cursor-pointer">
-                        <input
-                            ref={fileInputRef}
-                            type="file"
-                            accept="image/*"
-                            onChange={handleFileInput}
-                            className="hidden"
-                        />
-                        <div className="w-full rounded border-2 border-dashed border-gray-300 bg-gray-50 p-6 text-center hover:border-blue-400 hover:bg-blue-50 transition-colors">
-                            <div className="text-gray-600 font-medium">📷 파일 선택</div>
-                            <div className="text-sm text-gray-500 mt-1">이미지 파일 업로드</div>
-                        </div>
-                    </label>
-                    
-                    <label className="flex-1 cursor-pointer">
-                        <input
-                            ref={cameraInputRef}
-                            type="file"
-                            accept="image/*"
-                            capture="environment"
-                            onChange={handleFileInput}
-                            className="hidden"
-                        />
-                        <div className="w-full rounded border-2 border-dashed border-gray-300 bg-gray-50 p-6 text-center hover:border-blue-400 hover:bg-blue-50 transition-colors">
-                            <div className="text-gray-600 font-medium">📸 카메라 촬영</div>
-                            <div className="text-sm text-gray-500 mt-1">카메라로 직접 촬영</div>
-                        </div>
-                    </label>
-                </div>
+                <label className="block cursor-pointer">
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        onChange={handleFileInput}
+                        className="hidden"
+                    />
+                    <div className="w-full rounded border-2 border-dashed border-gray-300 bg-gray-50 p-6 text-center hover:border-blue-400 hover:bg-blue-50 transition-colors">
+                        <div className="text-gray-600 font-medium text-lg">📷 이미지 업로드 / 카메라 촬영</div>
+                        <div className="text-sm text-gray-500 mt-2">파일 선택 또는 카메라로 촬영</div>
+                    </div>
+                </label>
             </div>
 
             {/* Image Preview */}
@@ -295,7 +303,7 @@ export default function CameraOcrPage() {
                 <div className="rounded border bg-white p-4">
                     <div className="flex items-center justify-between mb-4">
                         <h2 className="text-lg font-medium">
-                            인식된 항목 ({items.length}개) - 2M으로 시작하는 항목만 표시
+                            인식된 항목 ({items.length}개) - 2M으로 시작하는 14자리만 표시
                         </h2>
                         <button
                             onClick={handleConfirm}
