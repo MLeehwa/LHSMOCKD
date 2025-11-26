@@ -186,14 +186,23 @@ export default function CameraOcrPage() {
         
         try {
             // Normalize and prepare items for mo_scan_items
-            const payload = items.map(item => {
-                const normalized = normalizeBarcode(item.text);
-                return {
-                    text: normalized,
-                    prefixes: "2M",
-                    matched: false // These are unmatched items from printed paper
-                };
-            });
+            // Filter out empty or invalid items
+            const payload = items
+                .map(item => {
+                    const normalized = normalizeBarcode(item.text);
+                    return {
+                        text: normalized,
+                        prefixes: "2M",
+                        matched: false // These are unmatched items from printed paper
+                    };
+                })
+                .filter(item => item.text && item.text.length > 0 && item.text.startsWith("2M")); // Remove empty or invalid items
+
+            if (payload.length === 0) {
+                setStatus("저장할 유효한 항목이 없습니다. (빈 항목 또는 2M으로 시작하지 않는 항목 제외)");
+                setUploading(false);
+                return;
+            }
 
             const { error } = await supabase
                 .from("mo_scan_items")
@@ -222,7 +231,7 @@ export default function CameraOcrPage() {
             <h1 className="text-2xl sm:text-3xl font-semibold">카메라 OCR (2M 인식)</h1>
             
             {status && (
-                <div className="rounded border bg-white p-3 text-sm sm:text-base text-gray-700">
+                <div className="rounded border bg-white p-3 text-sm sm:text-base" style={{ color: '#000000' }}>
                     {status}
                     {progress > 0 && progress < 100 && (
                         <div className="mt-2 w-full bg-gray-200 rounded-full h-2">
@@ -311,13 +320,18 @@ export default function CameraOcrPage() {
                                     type="text"
                                     value={item.text}
                                     onChange={(e) => handleItemEdit(index, e.target.value)}
-                                    className={`flex-1 px-3 py-2 rounded border font-mono text-base font-bold text-black ${
+                                    className={`flex-1 px-3 py-2 rounded border font-mono text-base font-bold ${
                                         item.edited 
                                             ? "bg-yellow-50 border-yellow-400" 
                                             : "bg-white border-gray-300"
                                     }`}
                                     placeholder="2M으로 시작하는 번호"
-                                    style={{ color: '#000000', fontWeight: 'bold' }}
+                                    style={{ 
+                                        color: '#000000',
+                                        fontWeight: 'bold',
+                                        WebkitTextFillColor: '#000000',
+                                        caretColor: '#000000'
+                                    }}
                                 />
                                 <button
                                     onClick={() => handleItemDelete(index)}
