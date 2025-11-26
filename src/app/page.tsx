@@ -17,6 +17,35 @@ export default function UploadPage() {
 
 // confidence formatting removed from UI; keep function out to avoid unused warnings
 
+	// Preprocess image to improve OCR accuracy
+	function preprocessImageForOCR(canvas: HTMLCanvasElement): HTMLCanvasElement {
+		const ctx = canvas.getContext("2d");
+		if (!ctx) return canvas;
+		
+		const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+		const data = imageData.data;
+		
+		// Convert to grayscale and enhance contrast
+		for (let i = 0; i < data.length; i += 4) {
+			// Convert to grayscale using luminance formula
+			const gray = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+			
+			// Enhance contrast (increase difference between text and background)
+			// Higher contrast helps OCR distinguish text from background
+			const contrast = 2.0; // Increased contrast multiplier for better text recognition
+			const enhanced = Math.min(255, Math.max(0, (gray - 128) * contrast + 128));
+			
+			// Apply to all channels (grayscale)
+			data[i] = enhanced;     // R
+			data[i + 1] = enhanced; // G
+			data[i + 2] = enhanced; // B
+			// Alpha channel (data[i + 3]) remains unchanged
+		}
+		
+		ctx.putImageData(imageData, 0, 0);
+		return canvas;
+	}
+
 	// Post-process OCR text to fix common misrecognitions, especially 8 and 9
 	function postProcessOcrText(text: string): string {
 		if (!text) return text;
@@ -174,7 +203,7 @@ export default function UploadPage() {
 					}
 					setStatus(m.status);
 				},
-			});
+            });
 
             // Prefer structured lines with confidence, fallback to words grouping, then text split
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -233,7 +262,8 @@ export default function UploadPage() {
             for (let pageNum = 1; pageNum <= numPages; pageNum++) {
                 setStatus(`Processing page ${pageNum} of ${numPages}...`);
                 const page = await pdf.getPage(pageNum);
-                const viewport = page.getViewport({ scale: 2 });
+                // Increase scale for better OCR accuracy (2 -> 3)
+                const viewport = page.getViewport({ scale: 3 });
                 const canvas = document.createElement("canvas");
                 const ctx = canvas.getContext("2d");
                 if (!ctx) {
@@ -247,14 +277,18 @@ export default function UploadPage() {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 await page.render({ canvasContext: ctx as any, viewport: viewport as any, canvas } as any).promise;
 
-                // Store the last page for preview
+                // Preprocess image to improve OCR accuracy
+                setStatus(`Enhancing image for OCR (page ${pageNum}/${numPages})...`);
+                const processedCanvas = preprocessImageForOCR(canvas);
+
+                // Store the last page for preview (original, not processed)
                 if (pageNum === numPages) {
                     const dataUrl = canvas.toDataURL("image/png");
                     setImageUrl(dataUrl);
                 }
 
                 setStatus(`Running OCR on page ${pageNum} of ${numPages}...`);
-                const { data } = await Tesseract.recognize(canvas, "kor+eng", {
+                const { data } = await Tesseract.recognize(processedCanvas, "kor+eng", {
                     logger: (m) => {
                         if (m.status === "recognizing text" && m.progress) {
                             // Calculate overall progress across all pages

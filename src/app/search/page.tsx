@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
 import { normalizeBarcode } from "../../lib/barcode";
 
@@ -16,6 +17,9 @@ export default function SearchPage() {
     const [unmatched, setUnmatched] = useState<ScanItem[]>([]);
     const [uploading, setUploading] = useState<boolean>(false);
     const searchInputRef = useRef<HTMLInputElement | null>(null);
+    const pathname = usePathname();
+    const hasUnsavedData = useRef<boolean>(false); // Track if there's unsaved data
+    const [showSimilarPairs, setShowSimilarPairs] = useState<boolean>(false); // Toggle for similar pairs section
 
     const allowedPrefixes = useCallback(() =>
         prefixText.split(",").map(p => p.trim()).filter(Boolean), [prefixText]);
@@ -31,6 +35,7 @@ export default function SearchPage() {
         if (!shouldInclude(normalized)) return;
         if (seenRef.current.has(normalized)) return;
         seenRef.current.add(normalized);
+        hasUnsavedData.current = true; // Mark as unsaved
         // Fast path: local cache lookup (no network)
         const exists = expectedCacheRef.current.has(normalized);
         if (exists) {
@@ -48,6 +53,7 @@ export default function SearchPage() {
             const set = new Set<string>();
             const list: string[] = [];
             for (const r of data ?? []) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const normalized = normalizeBarcode((r as any).text);
                 if (shouldInclude(normalized)) {
                     set.add(normalized);
@@ -64,6 +70,48 @@ export default function SearchPage() {
     }, [shouldInclude]);
 
     useEffect(() => { void loadExpectedCache(); }, [loadExpectedCache]);
+
+    // Load scanned items from database on page load
+    const loadScannedItems = useCallback(async () => {
+        try {
+            const { data, error } = await supabase
+                .from("mo_scan_items")
+                .select("text, matched")
+                .eq("prefixes", prefixText);
+            
+            if (error) throw error;
+            
+            const loadedMatched: ScanItem[] = [];
+            const loadedUnmatched: ScanItem[] = [];
+            
+            for (const item of data ?? []) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const normalized = normalizeBarcode((item as any).text);
+                if (!shouldInclude(normalized)) continue;
+                
+                seenRef.current.add(normalized);
+                
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                if ((item as any).matched) {
+                    loadedMatched.push({ text: normalized });
+                } else {
+                    loadedUnmatched.push({ text: normalized });
+                }
+            }
+            
+            setMatched(loadedMatched);
+            setUnmatched(loadedUnmatched);
+            setStatus(`Loaded ${loadedMatched.length + loadedUnmatched.length} scanned items from DB`);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            console.error("Load scanned items failed:", msg);
+        }
+    }, [prefixText, shouldInclude]);
+
+    // Load scanned items on mount and when prefixText changes
+    useEffect(() => { 
+        void loadScannedItems(); 
+    }, [loadScannedItems]);
 
     const uploadBatch = useCallback(async () => {
         const items = [...matched, ...unmatched];
@@ -82,11 +130,9 @@ export default function SearchPage() {
                 .from("mo_scan_items")
                 .upsert(payload, { onConflict: "text" });
             if (error) throw error;
-            setStatus("Uploaded batch");
-            // Clear UI lists after successful save (DB remains)
-            setMatched([]);
-            setUnmatched([]);
-            seenRef.current.clear();
+            setStatus(`Saved ${payload.length} items to DB`);
+            hasUnsavedData.current = false; // Mark as saved
+            // Keep UI lists - don't clear so counts remain visible
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             setStatus(`Upload failed: ${msg}`);
@@ -101,10 +147,177 @@ export default function SearchPage() {
         setUnmatched([]);
         setSearchQuery("");
         setStatus("");
+        hasUnsavedData.current = false;
     }, []);
+
+    // Auto-save function (reusable)
+    const autoSaveData = useCallback(async () => {
+        if (!hasUnsavedData.current) return;
+        const items = [...matched, ...unmatched];
+        if (items.length === 0) return;
+        
+        try {
+            const seen = new Set<string>();
+            const payload = items.filter(i => {
+                if (seen.has(i.text)) return false;
+                seen.add(i.text);
+                return true;
+            }).map(i => ({ text: i.text, prefixes: prefixText, matched: matched.some(m => m.text === i.text) }));
+
+            await supabase
+                .from("mo_scan_items")
+                .upsert(payload, { onConflict: "text" });
+            hasUnsavedData.current = false;
+            // Don't show status message for auto-save to avoid UI spam
+            // Status will only show on manual save or errors
+        } catch (e) {
+            console.error("Auto-save failed:", e);
+        }
+    }, [matched, unmatched, prefixText]);
+
+    // Periodic auto-save (every 5 seconds if there's unsaved data)
+    useEffect(() => {
+        if (!hasUnsavedData.current) return;
+        
+        const interval = setInterval(() => {
+            if (hasUnsavedData.current && (matched.length > 0 || unmatched.length > 0)) {
+                autoSaveData();
+            }
+        }, 5000); // Auto-save every 5 seconds
+        
+        return () => clearInterval(interval);
+    }, [matched, unmatched, autoSaveData]);
+
+    // Auto-save when navigating away from search page
+    useEffect(() => {
+        // Save when pathname changes away from /search
+        if (pathname !== "/search" && hasUnsavedData.current && (matched.length > 0 || unmatched.length > 0)) {
+            autoSaveData();
+        }
+    }, [pathname, matched, unmatched, autoSaveData]);
 
     // Calculate missing items (expected but not scanned yet)
     const missing = expectedList.filter(text => !seenRef.current.has(text));
+
+    // Calculate similarity between two barcodes
+    // Returns object with similarity score and match details
+    const calculateSimilarity = useCallback((text1: string, text2: string): { score: number; details: string } | null => {
+        const t1 = text1.toUpperCase();
+        const t2 = text2.toUpperCase();
+        
+        // Extract numeric parts (after prefix)
+        const num1 = t1.replace(/^[A-Z]+/, '');
+        const num2 = t2.replace(/^[A-Z]+/, '');
+        
+        // Check if last 3 digits match (most common OCR error pattern)
+        if (num1.length >= 3 && num2.length >= 3) {
+            const last3_1 = num1.slice(-3);
+            const last3_2 = num2.slice(-3);
+            if (last3_1 === last3_2) {
+                // Last 3 digits match - check how similar the rest is
+                const prefix1 = num1.slice(0, -3);
+                const prefix2 = num2.slice(0, -3);
+                
+                // Count differences in prefix
+                let diff = 0;
+                const maxLen = Math.max(prefix1.length, prefix2.length);
+                const minLen = Math.min(prefix1.length, prefix2.length);
+                
+                for (let i = 0; i < minLen; i++) {
+                    if (prefix1[i] !== prefix2[i]) diff++;
+                }
+                diff += Math.abs(prefix1.length - prefix2.length);
+                
+                // If only 1-2 digits differ, consider it similar
+                if (diff <= 2 && maxLen > 0) {
+                    const score = 1.0 - (diff / maxLen);
+                    return {
+                        score: score,
+                        details: `끝 3자리 일치, 앞부분 ${diff}자리 차이`
+                    };
+                } else if (diff <= 1) {
+                    return {
+                        score: 0.9,
+                        details: `끝 3자리 일치, 앞부분 1자리 차이`
+                    };
+                }
+            }
+        }
+        
+        // Check if same length and only 1-2 digits differ
+        if (num1.length === num2.length && num1.length > 0) {
+            let diff = 0;
+            for (let i = 0; i < num1.length; i++) {
+                if (num1[i] !== num2[i]) diff++;
+            }
+            if (diff <= 2 && diff > 0) {
+                return {
+                    score: 1.0 - (diff / num1.length),
+                    details: `길이 같음, ${diff}자리 차이`
+                };
+            }
+        }
+        
+        return null;
+    }, []);
+
+    // Find similar pairs between missing (OCR) and unmatched (barcode scan - accurate)
+    // unmatched is the accurate barcode scan, missing is OCR which might be wrong
+    const similarPairs = useMemo(() => {
+        const pairs: Array<{ 
+            missing: string; 
+            unmatched: string; 
+            similarity: number;
+            details: string;
+        }> = [];
+        
+        for (const unmatchedItem of unmatched) {
+            for (const missingItem of missing) {
+                const result = calculateSimilarity(missingItem, unmatchedItem.text);
+                if (result && result.score >= 0.7) {
+                    pairs.push({
+                        missing: missingItem,
+                        unmatched: unmatchedItem.text,
+                        similarity: result.score,
+                        details: result.details
+                    });
+                }
+            }
+        }
+        
+        // Sort by similarity (highest first)
+        return pairs.sort((a, b) => b.similarity - a.similarity);
+    }, [missing, unmatched, calculateSimilarity]);
+
+    // Handle matching similar items
+    const handleMatchSimilar = useCallback(async (missingText: string, unmatchedText: string) => {
+        try {
+            // Remove from unmatched
+            setUnmatched(prev => prev.filter(item => item.text !== unmatchedText));
+            seenRef.current.delete(unmatchedText);
+            
+            // Add to matched
+            setMatched(prev => [...prev, { text: missingText }]);
+            seenRef.current.add(missingText);
+            hasUnsavedData.current = true;
+            
+            // Save to DB
+            const payload = [
+                { text: missingText, prefixes: prefixText, matched: true },
+                { text: unmatchedText, prefixes: prefixText, matched: false } // Keep unmatched in DB but mark as processed
+            ];
+            
+            await supabase
+                .from("mo_scan_items")
+                .upsert(payload, { onConflict: "text" });
+            
+            setStatus(`Matched: ${unmatchedText} → ${missingText}`);
+            setSearchQuery(""); // Clear search
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setStatus(`Match failed: ${msg}`);
+        }
+    }, [prefixText]);
 
     // Create unified list with proper ordering:
     // 1. Unmatched (orange) - always on top
@@ -135,13 +348,35 @@ export default function SearchPage() {
     }, [unmatched, missing, matched, searchQuery]);
 
     // Handle adding item from list
-    const handleAddItem = useCallback((text: string, status: 'unmatched' | 'missing' | 'matched') => {
+    const handleAddItem = useCallback(async (text: string, status: 'unmatched' | 'missing' | 'matched') => {
         // Only process missing items (expected but not scanned) and unmatched items
         if (status === 'missing' || status === 'unmatched') {
             addItem(text);
-            setStatus(`Added: ${text}`);
+            setSearchQuery(""); // Clear search query after adding item
+            
+            // Wait a bit for state to update, then auto-save
+            setTimeout(async () => {
+                try {
+                    // Determine if item is matched (exists in expected cache)
+                    const isMatched = expectedCacheRef.current.has(text);
+                    
+                    const payload = [{
+                        text: text,
+                        prefixes: prefixText,
+                        matched: isMatched
+                    }];
+
+                    await supabase
+                        .from("mo_scan_items")
+                        .upsert(payload, { onConflict: "text" });
+                    hasUnsavedData.current = false;
+                    setStatus(`Added and saved: ${text}`);
+                } catch (e) {
+                    console.error("Auto-save after add failed:", e);
+                }
+            }, 100);
         }
-    }, [addItem]);
+    }, [addItem, prefixText]);
 
     return (
 		<div className="w-full max-w-full mx-auto space-y-3 px-2 sm:px-4">
@@ -183,6 +418,57 @@ export default function SearchPage() {
                     inputMode="numeric"
                 />
             </div>
+            {/* Similar Items Matching Section - Collapsible */}
+            {similarPairs.length > 0 && (
+                <div className="rounded border bg-yellow-50 border-yellow-300 p-3 sm:p-4">
+                    <div className="flex items-center justify-between mb-3">
+                        <h2 className="font-medium text-base sm:text-sm text-yellow-900">
+                            유사 항목 매칭 ({similarPairs.length}개)
+                        </h2>
+                        <button
+                            onClick={() => setShowSimilarPairs(!showSimilarPairs)}
+                            className="px-3 py-1.5 text-xs font-medium rounded touch-manipulation bg-yellow-600 text-white hover:bg-yellow-700 active:bg-yellow-800"
+                        >
+                            {showSimilarPairs ? '숨기기' : '보기'}
+                        </button>
+                    </div>
+                    {showSimilarPairs && (
+                        <div className="space-y-2 max-h-[40vh] sm:max-h-96 overflow-auto">
+                            <div className="text-xs text-yellow-800 mb-2 p-2 bg-yellow-100 rounded">
+                                💡 바코드 스캔(Unmatched)이 정확한 번호입니다. OCR 인식(Missing)이 잘못되었을 가능성이 높으니 직접 확인 후 매칭하세요.
+                            </div>
+                            {similarPairs.map((pair, idx) => (
+                                <div 
+                                    key={`${pair.missing}-${pair.unmatched}-${idx}`}
+                                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-white rounded border border-yellow-200"
+                                >
+                                    <div className="flex-1 flex flex-col gap-2">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xs font-semibold text-gray-600">OCR (Missing):</span>
+                                            <span className="font-mono text-sm text-gray-700 bg-gray-100 px-2 py-1 rounded">{pair.missing}</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xs font-semibold text-orange-600">바코드 (Unmatched):</span>
+                                            <span className="font-mono text-sm text-orange-700 bg-orange-50 px-2 py-1 rounded">{pair.unmatched}</span>
+                                        </div>
+                                        <div className="text-xs text-gray-500 italic">
+                                            {pair.details} (유사도: {Math.round(pair.similarity * 100)}%)
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => handleMatchSimilar(pair.missing, pair.unmatched)}
+                                        className="min-w-[80px] px-4 py-2 text-sm font-medium rounded touch-manipulation bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800"
+                                        title="바코드 스캔을 OCR 예상값으로 매칭"
+                                    >
+                                        매칭
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
             <div className="rounded border bg-white p-3 sm:p-4">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-3 gap-2">
                     <h2 className="font-medium text-base sm:text-sm">
@@ -213,21 +499,18 @@ export default function SearchPage() {
                         return (
                             <li 
                                 key={`${item.text}-${idx}`} 
-                                className={`rounded border px-3 py-2.5 sm:px-3 sm:py-2 flex items-center justify-between gap-2 ${bgColor} ${textColor} ${borderColor}`}
+                                className={`rounded border px-3 py-2.5 sm:px-3 sm:py-2 flex items-center ${item.status === 'matched' ? 'justify-start' : 'justify-between'} gap-2 ${bgColor} ${textColor} ${borderColor}`}
                             >
                                 <span className="font-mono text-base sm:text-sm flex-1">{item.text}</span>
-                                <button
-                                    onClick={() => handleAddItem(item.text, item.status)}
-                                    disabled={item.status === 'matched'}
-                                    className={`min-w-[60px] sm:min-w-[50px] px-3 py-2 sm:px-2 sm:py-1.5 text-sm sm:text-xs font-medium rounded touch-manipulation ${
-                                        item.status === 'matched' 
-                                            ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
-                                            : 'bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800'
-                                    }`}
-                                    title={item.status === 'matched' ? '이미 스캔됨' : '스캔 작업 추가'}
-                                >
-                                    {item.status === 'matched' ? '완료' : '추가'}
-                                </button>
+                                {item.status !== 'matched' && (
+                                    <button
+                                        onClick={() => handleAddItem(item.text, item.status)}
+                                        className="min-w-[60px] sm:min-w-[50px] px-3 py-2 sm:px-2 sm:py-1.5 text-sm sm:text-xs font-medium rounded touch-manipulation bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800"
+                                        title="스캔 작업 추가"
+                                    >
+                                        추가
+                                    </button>
+                                )}
                             </li>
                         );
                     })}

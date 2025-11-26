@@ -134,6 +134,7 @@ export default function ScanPage() {
             const set = new Set<string>();
             const list: string[] = [];
             for (const r of data ?? []) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const normalized = normalizeBarcode((r as any).text);
                 if (shouldInclude(normalized)) {
                     set.add(normalized);
@@ -150,6 +151,48 @@ export default function ScanPage() {
     }, [shouldInclude]);
 
     useEffect(() => { void loadExpectedCache(); }, [loadExpectedCache]);
+
+    // Load scanned items from database on page load
+    const loadScannedItems = useCallback(async () => {
+        try {
+            const { data, error } = await supabase
+                .from("mo_scan_items")
+                .select("text, matched")
+                .eq("prefixes", prefixText);
+            
+            if (error) throw error;
+            
+            const loadedMatched: ScanItem[] = [];
+            const loadedUnmatched: ScanItem[] = [];
+            
+            for (const item of data ?? []) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const normalized = normalizeBarcode((item as any).text);
+                if (!shouldInclude(normalized)) continue;
+                
+                seenRef.current.add(normalized);
+                
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                if ((item as any).matched) {
+                    loadedMatched.push({ text: normalized });
+                } else {
+                    loadedUnmatched.push({ text: normalized });
+                }
+            }
+            
+            setMatched(loadedMatched);
+            setUnmatched(loadedUnmatched);
+            setStatus(`Loaded ${loadedMatched.length + loadedUnmatched.length} scanned items from DB`);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            console.error("Load scanned items failed:", msg);
+        }
+    }, [prefixText, shouldInclude]);
+
+    // Load scanned items on mount and when prefixText changes
+    useEffect(() => { 
+        void loadScannedItems(); 
+    }, [loadScannedItems]);
 
     const uploadBatch = useCallback(async () => {
         const items = [...matched, ...unmatched];
@@ -168,12 +211,9 @@ export default function ScanPage() {
                 .from("mo_scan_items")
                 .upsert(payload, { onConflict: "text" });
             if (error) throw error;
-            setStatus("Uploaded batch");
+            setStatus(`Saved ${payload.length} items to DB`);
             hasUnsavedData.current = false; // Mark as saved
-            // Clear UI lists after successful save (DB remains)
-            setMatched([]);
-            setUnmatched([]);
-            seenRef.current.clear();
+            // Keep UI lists - don't clear so counts remain visible
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             setStatus(`Upload failed: ${msg}`);
@@ -192,33 +232,51 @@ export default function ScanPage() {
         inputRef.current?.focus();
     }, []);
 
+    // Auto-save function (reusable)
+    const autoSaveData = useCallback(async () => {
+        if (!hasUnsavedData.current) return;
+        const items = [...matched, ...unmatched];
+        if (items.length === 0) return;
+        
+        try {
+            const seen = new Set<string>();
+            const payload = items.filter(i => {
+                if (seen.has(i.text)) return false;
+                seen.add(i.text);
+                return true;
+            }).map(i => ({ text: i.text, prefixes: prefixText, matched: matched.some(m => m.text === i.text) }));
+
+            await supabase
+                .from("mo_scan_items")
+                .upsert(payload, { onConflict: "text" });
+            hasUnsavedData.current = false;
+            // Don't show status message for auto-save to avoid UI spam
+            // Status will only show on manual save or errors
+        } catch (e) {
+            console.error("Auto-save failed:", e);
+        }
+    }, [matched, unmatched, prefixText]);
+
+    // Periodic auto-save (every 5 seconds if there's unsaved data)
+    useEffect(() => {
+        if (!hasUnsavedData.current) return;
+        
+        const interval = setInterval(() => {
+            if (hasUnsavedData.current && (matched.length > 0 || unmatched.length > 0)) {
+                autoSaveData();
+            }
+        }, 5000); // Auto-save every 5 seconds
+        
+        return () => clearInterval(interval);
+    }, [matched, unmatched, autoSaveData]);
+
     // Auto-save when navigating away from scan page
     useEffect(() => {
         // Save when pathname changes away from /scan
         if (pathname !== "/scan" && hasUnsavedData.current && (matched.length > 0 || unmatched.length > 0)) {
-            const saveData = async () => {
-                const items = [...matched, ...unmatched];
-                if (items.length === 0) return;
-                
-                try {
-                    const seen = new Set<string>();
-                    const payload = items.filter(i => {
-                        if (seen.has(i.text)) return false;
-                        seen.add(i.text);
-                        return true;
-                    }).map(i => ({ text: i.text, prefixes: prefixText, matched: matched.some(m => m.text === i.text) }));
-
-                    await supabase
-                        .from("mo_scan_items")
-                        .upsert(payload, { onConflict: "text" });
-                    hasUnsavedData.current = false;
-                } catch (e) {
-                    console.error("Auto-save failed:", e);
-                }
-            };
-            saveData();
+            autoSaveData();
         }
-    }, [pathname, matched, unmatched, prefixText]);
+    }, [pathname, matched, unmatched, autoSaveData]);
 
     // Calculate missing items (expected but not scanned yet)
     const missing = expectedList.filter(text => !seenRef.current.has(text));
