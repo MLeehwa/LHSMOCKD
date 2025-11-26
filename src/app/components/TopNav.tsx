@@ -7,6 +7,7 @@ const nav = [
 	{ href: "/scan", label: "SCAN" },
 	{ href: "/search", label: "SEARCH" },
 	{ href: "/match", label: "MATCH" },
+	{ href: "/camera-ocr", label: "CAMERA" },
 ];
 
 export default function TopNav() {

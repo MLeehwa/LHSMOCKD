@@ -35,15 +35,39 @@ export default function SearchPage() {
         if (!shouldInclude(normalized)) return;
         if (seenRef.current.has(normalized)) return;
         seenRef.current.add(normalized);
-        hasUnsavedData.current = true; // Mark as unsaved
+        
         // Fast path: local cache lookup (no network)
         const exists = expectedCacheRef.current.has(normalized);
+        const isMatched = exists;
+        
+        // Update UI immediately
         if (exists) {
             setMatched(prev => [...prev, { text: normalized }]);
+            setStatus(`Matched: ${normalized}`);
         } else {
             setUnmatched(prev => [...prev, { text: normalized }]);
+            setStatus(`Unmatched: ${normalized}`);
         }
-    }, [shouldInclude]);
+        
+        // Save to DB immediately on add (same as scan)
+        try {
+            const payload = [{
+                text: normalized,
+                prefixes: prefixText,
+                matched: isMatched
+            }];
+            
+            await supabase
+                .from("mo_scan_items")
+                .upsert(payload, { onConflict: "text" });
+            
+            hasUnsavedData.current = false; // Mark as saved
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setStatus(`Save failed: ${msg}`);
+            hasUnsavedData.current = true; // Mark as unsaved on error
+        }
+    }, [prefixText, shouldInclude]);
 
     // Load expected cache from DB once (and provide a manual refresh)
     const loadExpectedCache = useCallback(async () => {
@@ -262,62 +286,78 @@ export default function SearchPage() {
     }, []);
 
     // Find similar pairs between missing (OCR) and unmatched (barcode scan - accurate)
+    // Only show when there's exactly 1 missing and 1 unmatched (1:1 matching scenario)
     // unmatched is the accurate barcode scan, missing is OCR which might be wrong
     const similarPairs = useMemo(() => {
-        const pairs: Array<{ 
-            missing: string; 
-            unmatched: string; 
-            similarity: number;
-            details: string;
-        }> = [];
-        
-        for (const unmatchedItem of unmatched) {
-            for (const missingItem of missing) {
-                const result = calculateSimilarity(missingItem, unmatchedItem.text);
-                if (result && result.score >= 0.7) {
-                    pairs.push({
-                        missing: missingItem,
-                        unmatched: unmatchedItem.text,
-                        similarity: result.score,
-                        details: result.details
-                    });
-                }
-            }
+        // Only show matching when there's exactly 1 missing and 1 unmatched
+        if (missing.length !== 1 || unmatched.length !== 1) {
+            return [];
         }
         
-        // Sort by similarity (highest first)
-        return pairs.sort((a, b) => b.similarity - a.similarity);
+        const missingItem = missing[0];
+        const unmatchedItem = unmatched[0];
+        const result = calculateSimilarity(missingItem, unmatchedItem.text);
+        
+        if (result && result.score >= 0.7) {
+            return [{
+                missing: missingItem,
+                unmatched: unmatchedItem.text,
+                similarity: result.score,
+                details: result.details
+            }];
+        }
+        
+        return [];
     }, [missing, unmatched, calculateSimilarity]);
 
     // Handle matching similar items
+    // unmatchedText (barcode scan) is accurate, missingText (OCR) is wrong
+    // Update mo_ocr_results to replace OCR value with barcode scan value
     const handleMatchSimilar = useCallback(async (missingText: string, unmatchedText: string) => {
         try {
-            // Remove from unmatched
+            // Update mo_ocr_results: replace OCR value (missingText) with barcode scan value (unmatchedText)
+            // First, delete the old OCR value
+            await supabase
+                .from("mo_ocr_results")
+                .delete()
+                .eq("text", missingText);
+            
+            // Then, insert the barcode scan value as the correct OCR result
+            await supabase
+                .from("mo_ocr_results")
+                .upsert([{
+                    text: unmatchedText,
+                    prefixes: prefixText,
+                    confidence: 0
+                }], { onConflict: "text" });
+            
+            // Update mo_scan_items: mark barcode scan as matched
+            await supabase
+                .from("mo_scan_items")
+                .upsert([{
+                    text: unmatchedText,
+                    prefixes: prefixText,
+                    matched: true
+                }], { onConflict: "text" });
+            
+            // Remove from unmatched list
             setUnmatched(prev => prev.filter(item => item.text !== unmatchedText));
             seenRef.current.delete(unmatchedText);
             
             // Add to matched
-            setMatched(prev => [...prev, { text: missingText }]);
-            seenRef.current.add(missingText);
-            hasUnsavedData.current = true;
+            setMatched(prev => [...prev, { text: unmatchedText }]);
+            seenRef.current.add(unmatchedText);
             
-            // Save to DB
-            const payload = [
-                { text: missingText, prefixes: prefixText, matched: true },
-                { text: unmatchedText, prefixes: prefixText, matched: false } // Keep unmatched in DB but mark as processed
-            ];
+            // Reload expected cache to reflect the change
+            await loadExpectedCache();
             
-            await supabase
-                .from("mo_scan_items")
-                .upsert(payload, { onConflict: "text" });
-            
-            setStatus(`Matched: ${unmatchedText} → ${missingText}`);
+            setStatus(`매칭 완료: OCR "${missingText}" → 바코드 "${unmatchedText}"로 업데이트됨`);
             setSearchQuery(""); // Clear search
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            setStatus(`Match failed: ${msg}`);
+            setStatus(`매칭 실패: ${msg}`);
         }
-    }, [prefixText]);
+    }, [prefixText, loadExpectedCache]);
 
     // Create unified list with proper ordering:
     // 1. Unmatched (orange) - always on top
@@ -351,32 +391,10 @@ export default function SearchPage() {
     const handleAddItem = useCallback(async (text: string, status: 'unmatched' | 'missing' | 'matched') => {
         // Only process missing items (expected but not scanned) and unmatched items
         if (status === 'missing' || status === 'unmatched') {
-            addItem(text);
+            await addItem(text); // addItem now saves to DB immediately
             setSearchQuery(""); // Clear search query after adding item
-            
-            // Wait a bit for state to update, then auto-save
-            setTimeout(async () => {
-                try {
-                    // Determine if item is matched (exists in expected cache)
-                    const isMatched = expectedCacheRef.current.has(text);
-                    
-                    const payload = [{
-                        text: text,
-                        prefixes: prefixText,
-                        matched: isMatched
-                    }];
-
-                    await supabase
-                        .from("mo_scan_items")
-                        .upsert(payload, { onConflict: "text" });
-                    hasUnsavedData.current = false;
-                    setStatus(`Added and saved: ${text}`);
-                } catch (e) {
-                    console.error("Auto-save after add failed:", e);
-                }
-            }, 100);
         }
-    }, [addItem, prefixText]);
+    }, [addItem]);
 
     return (
 		<div className="w-full max-w-full mx-auto space-y-3 px-2 sm:px-4">

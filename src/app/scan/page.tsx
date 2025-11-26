@@ -228,11 +228,10 @@ export default function ScanPage() {
 
 
     // Handle double-click on list items to mark as scanned
-    const handleItemDoubleClick = useCallback((text: string, status: 'unmatched' | 'missing' | 'matched') => {
+    const handleItemDoubleClick = useCallback(async (text: string, status: 'unmatched' | 'missing' | 'matched') => {
         // Only process missing items (expected but not scanned) and unmatched items
         if (status === 'missing' || status === 'unmatched') {
-            addItem(text);
-            setStatus(`Added: ${text}`);
+            await addItem(text); // addItem now saves to DB immediately
         }
     }, [addItem]);
 
