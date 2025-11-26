@@ -118,12 +118,20 @@ export default function UploadPage() {
 		if (lines.length === 0) return;
 		setUploading(true);
 		try {
-			// Always delete all existing rows before upload (daily reset)
-			const { error: delErr } = await supabase
-				.from("mo_ocr_results")
-				.delete()
-				.gt("id", 0); // delete all rows
-			if (delErr) throw delErr;
+			// Delete all existing rows from both OCR and SCAN databases before upload
+			const [ocrDelRes, scanDelRes] = await Promise.all([
+				supabase
+					.from("mo_ocr_results")
+					.delete()
+					.gt("id", 0), // delete all rows
+				supabase
+					.from("mo_scan_items")
+					.delete()
+					.gt("id", 0) // delete all rows
+			]);
+			
+			if (ocrDelRes.error) throw ocrDelRes.error;
+			if (scanDelRes.error) throw scanDelRes.error;
 
 			// Deduplicate by text within the current batch to avoid Postgres upsert multi-hit error
 			const seen = new Set<string>();
@@ -141,7 +149,7 @@ export default function UploadPage() {
 				.from("mo_ocr_results")
 				.upsert(payload, { onConflict: "text" });
 			if (error) throw error;
-			setStatus("Uploaded to Supabase");
+			setStatus("Uploaded to Supabase (OCR and SCAN databases cleared)");
 		} catch (e) {
 			// Improve error visibility for Supabase/PostgREST errors
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
