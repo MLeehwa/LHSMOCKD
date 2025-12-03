@@ -374,6 +374,81 @@ export default function SearchPage() {
         return pairs.sort((a, b) => b.similarity - a.similarity);
     }, [missing, unmatched, calculateSimilarity]);
 
+    // For each unmatched, find similar OCR results across the *entire* expected list
+    // - 이미 스캔된 것(Scanned)과 아직 스캔 안 된 것(Missing)으로 나눠서 보여준다.
+    // - 단순 참고용으로만 화면에 표시하고, 실제 DB 변경은 하지 않는다.
+    const closestExpectedPairs = useMemo(() => {
+        if (expectedList.length === 0 || unmatched.length === 0) {
+            return [];
+        }
+
+        const missingSet = new Set(missing);
+
+        const pairs: Array<{
+            unmatched: string;
+            scannedCandidates: Array<{
+                expected: string;
+                similarity: number;
+                details: string;
+            }>;
+            missingCandidates: Array<{
+                expected: string;
+                similarity: number;
+                details: string;
+            }>;
+        }> = [];
+
+        for (const unmatchedItem of unmatched) {
+            const scannedCandidates: Array<{
+                expected: string;
+                similarity: number;
+                details: string;
+            }> = [];
+            const missingCandidates: Array<{
+                expected: string;
+                similarity: number;
+                details: string;
+            }> = [];
+
+            for (const expectedText of expectedList) {
+                const result = calculateSimilarity(expectedText, unmatchedItem.text);
+                if (!result) continue;
+
+                // 일정 수준(0.7 이상) 이상일 때만 후보로 본다
+                if (result.score >= 0.7) {
+                    const targetArray = missingSet.has(expectedText)
+                        ? missingCandidates
+                        : scannedCandidates;
+                    targetArray.push({
+                        expected: expectedText,
+                        similarity: result.score,
+                        details: result.details,
+                    });
+                }
+            }
+
+            if (scannedCandidates.length === 0 && missingCandidates.length === 0) continue;
+
+            // 각 그룹별로 유사도 높은 순 정렬 후 상위 N개만 남긴다.
+            const topN = 5;
+            scannedCandidates.sort((a, b) => b.similarity - a.similarity);
+            missingCandidates.sort((a, b) => b.similarity - a.similarity);
+
+            pairs.push({
+                unmatched: unmatchedItem.text,
+                scannedCandidates: scannedCandidates.slice(0, topN),
+                missingCandidates: missingCandidates.slice(0, topN),
+            });
+        }
+
+        // 그룹 정렬 기준: 스캔된 후보 중 최고 유사도 → 없으면 미싱 후보 중 최고 유사도
+        return pairs.sort((a, b) => {
+            const aBest = a.scannedCandidates[0]?.similarity ?? a.missingCandidates[0]?.similarity ?? 0;
+            const bBest = b.scannedCandidates[0]?.similarity ?? b.missingCandidates[0]?.similarity ?? 0;
+            return bBest - aBest;
+        });
+    }, [unmatched, expectedList, missing, calculateSimilarity]);
+
     // Normalize barcode to target length (default 14)
     // If longer, take first N characters; if shorter, pad or take as-is
     const normalizeToLength = useCallback((text: string, targetLen: number = 14): string => {
@@ -506,11 +581,58 @@ export default function SearchPage() {
     // Handle adding item from list
     const handleAddItem = useCallback(async (text: string, status: 'unmatched' | 'missing' | 'matched') => {
         // Only process missing items (expected but not scanned) and unmatched items
-        if (status === 'missing' || status === 'unmatched') {
+        if (status === 'missing') {
+            // 이미 OCR 결과(mo_ocr_results)에 존재하지만 스캔되지 않은 값 -> 스캔만 추가
             await addItem(text); // addItem now saves to DB immediately
             setSearchQuery(""); // Clear search query after adding item
+            return;
         }
-    }, [addItem]);
+
+        if (status === 'unmatched') {
+            // Unmatched인 경우: 이 값이 실제로 존재한다고 판단하면
+            // 1) OCR 결과 테이블(mo_ocr_results)에 추가하고
+            // 2) 스캔 테이블(mo_scan_items)에서도 matched=true로 업데이트하여 매칭 처리
+            try {
+                const normalized = normalizeBarcode(text);
+
+                // 1) mo_ocr_results에 추가 (이미 있으면 무시)
+                const { error: ocrError } = await supabase
+                    .from("mo_ocr_results")
+                    .upsert([{
+                        text: normalized,
+                        prefixes: prefixText,
+                        confidence: 0,
+                    }], { onConflict: "text" });
+                if (ocrError) throw ocrError;
+
+                // 2) mo_scan_items에서 해당 항목을 matched=true 로 업데이트
+                const { error: scanError } = await supabase
+                    .from("mo_scan_items")
+                    .upsert([{
+                        text: normalized,
+                        prefixes: prefixText,
+                        matched: true,
+                    }], { onConflict: "text" });
+                if (scanError) throw scanError;
+
+                // 3) 로컬 상태 업데이트: unmatched 목록에서 제거하고 matched로 이동
+                setUnmatched(prev => prev.filter(item => item.text !== text));
+                setMatched(prev => {
+                    if (prev.some(m => m.text === normalized)) return prev;
+                    return [...prev, { text: normalized }];
+                });
+                seenRef.current.add(normalized);
+
+                // 4) expected 캐시/리스트를 갱신해서 missing 계산도 바로 반영
+                await loadExpectedCache();
+                setStatus(`Unmatched 항목 "${text}"을(를) OCR 결과에 추가하고 매칭 처리했습니다.`);
+                setSearchQuery("");
+            } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                setStatus(`추가 실패: ${msg}`);
+            }
+        }
+    }, [addItem, prefixText, loadExpectedCache]);
 
     // Handle deleting unmatched item
     const handleDeleteItem = useCallback(async (text: string) => {
@@ -765,6 +887,112 @@ export default function SearchPage() {
                             })}
                         </div>
                     )}
+                </div>
+            )}
+
+            {/* For each unmatched, show multiple closest OCR candidates from the entire expected list (read-only, 참고용)
+                - 이미 스캔된 것(Scanned)과 아직 스캔 안 된 것(Missing)으로 나눠서 표시 */}
+            {closestExpectedPairs.length > 0 && (
+                <div className="rounded border bg-blue-50 border-blue-300 p-3 sm:p-4">
+                    <h2 className="font-medium text-base sm:text-sm text-blue-900 mb-2">
+                        Unmatched 별 근접한 OCR 후보들 (Scanned / Missing 구분, 참고용)
+                    </h2>
+                    <div className="text-xs text-blue-800 mb-2 p-2 bg-blue-100 rounded">
+                        🔍 각 Unmatched 바코드가 전체 OCR 결과(이미 스캔된 것 포함) 중 어떤 번호들과 비슷한지 보여줍니다.
+                        자동으로 매칭/수정하지 않고, 눈으로 확인용으로만 사용하세요.
+                    </div>
+                    <div className="space-y-2 max-h-[40vh] sm:max-h-96 overflow-auto">
+                        {closestExpectedPairs.map((pair, idx) => {
+                            const unmatchedLen = pair.unmatched.length;
+
+                            return (
+                                <div
+                                    key={`${pair.unmatched}-${idx}`}
+                                    className="flex flex-col gap-2 p-3 bg-white rounded border border-blue-200"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs font-semibold text-orange-600">Unmatched:</span>
+                                        <span className="font-mono text-sm text-orange-700 bg-orange-50 px-2 py-1 rounded">
+                                            {pair.unmatched}
+                                            <span className="ml-1 text-orange-600 text-[11px]">
+                                                ({unmatchedLen}자)
+                                            </span>
+                                        </span>
+                                    </div>
+                                    <div className="mt-1 space-y-2">
+                                        {pair.scannedCandidates.length > 0 && (
+                                            <div className="space-y-1">
+                                                <div className="text-[11px] font-semibold text-emerald-700">
+                                                    이미 스캔된 OCR 후보 (Scanned)
+                                                </div>
+                                                {pair.scannedCandidates.map((c, i) => {
+                                                    const expectedLen = c.expected.length;
+                                                    const lenDiff = Math.abs(unmatchedLen - expectedLen);
+                                                    return (
+                                                        <div
+                                                            key={`${pair.unmatched}-scanned-${c.expected}-${i}`}
+                                                            className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 px-2 py-1 rounded ${
+                                                                lenDiff > 0 ? "bg-emerald-50" : "bg-emerald-100"
+                                                            }`}
+                                                        >
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-xs font-semibold text-emerald-700">
+                                                                    후보 {i + 1}:
+                                                                </span>
+                                                                <span className="font-mono text-xs sm:text-sm text-emerald-900 bg-white px-2 py-0.5 rounded">
+                                                                    {c.expected}
+                                                                    <span className="ml-1 text-emerald-700 text-[10px]">
+                                                                        ({expectedLen}자)
+                                                                    </span>
+                                                                </span>
+                                                            </div>
+                                                            <div className="text-[11px] text-gray-600 italic">
+                                                                {c.details} (유사도: {Math.round(c.similarity * 100)}%)
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                        {pair.missingCandidates.length > 0 && (
+                                            <div className="space-y-1">
+                                                <div className="text-[11px] font-semibold text-amber-700">
+                                                    아직 스캔 안 된 OCR 후보 (Missing)
+                                                </div>
+                                                {pair.missingCandidates.map((c, i) => {
+                                                    const expectedLen = c.expected.length;
+                                                    const lenDiff = Math.abs(unmatchedLen - expectedLen);
+                                                    return (
+                                                        <div
+                                                            key={`${pair.unmatched}-missing-${c.expected}-${i}`}
+                                                            className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 px-2 py-1 rounded ${
+                                                                lenDiff > 0 ? "bg-amber-50" : "bg-amber-100"
+                                                            }`}
+                                                        >
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-xs font-semibold text-amber-700">
+                                                                    후보 {i + 1}:
+                                                                </span>
+                                                                <span className="font-mono text-xs sm:text-sm text-amber-900 bg-white px-2 py-0.5 rounded">
+                                                                    {c.expected}
+                                                                    <span className="ml-1 text-amber-700 text-[10px]">
+                                                                        ({expectedLen}자)
+                                                                    </span>
+                                                                </span>
+                                                            </div>
+                                                            <div className="text-[11px] text-gray-600 italic">
+                                                                {c.details} (유사도: {Math.round(c.similarity * 100)}%)
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
                 </div>
             )}
 
