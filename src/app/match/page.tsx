@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabaseClient";
+import { normalizeBarcode } from "../../lib/barcode";
 
 type Row = { text: string };
 
@@ -12,53 +13,74 @@ export default function MatchPage() {
     const [scanned, setScanned] = useState<Row[]>([]);   // from mo_scan_items
 
     const allowedPrefixes = useMemo(() => prefixText.split(",").map(p => p.trim()).filter(Boolean), [prefixText]);
-    const normalize = useCallback((t: string) => String(t ?? "").trim().toUpperCase(), []);
     const include = useCallback((t: string) => {
-        const v = normalize(t);
+        const v = normalizeBarcode(t);
         return allowedPrefixes.length === 0 ? true : allowedPrefixes.some(p => v.startsWith(p.toUpperCase()));
-    }, [allowedPrefixes, normalize]);
+    }, [allowedPrefixes]);
 
     const refresh = useCallback(async () => {
         setLoading(true);
         setError("");
         try {
-            const [expRes, scanRes] = await Promise.all([
-                supabase.from("mo_ocr_results").select("text"),
-                supabase.from("mo_scan_items").select("text")
-            ]);
+            // Load expected from mo_ocr_results (no prefix filter needed, we'll filter client-side)
+            const expRes = await supabase.from("mo_ocr_results").select("text");
             if (expRes.error) throw expRes.error;
+            
+            // Load scanned from mo_scan_items with prefix filter (same as SEARCH page)
+            const scanRes = await supabase
+                .from("mo_scan_items")
+                .select("text, matched")
+                .eq("prefixes", prefixText);
             if (scanRes.error) throw scanRes.error;
-            setExpected((expRes.data ?? []).map(r => ({ text: String((r as any).text) })));
-            setScanned((scanRes.data ?? []).map(r => ({ text: String((r as any).text) })));
+            
+            // Normalize and filter expected items
+            const normalizedExpected: Row[] = [];
+            for (const r of expRes.data ?? []) {
+                const normalized = normalizeBarcode(String((r as any).text));
+                if (include(normalized)) {
+                    normalizedExpected.push({ text: normalized });
+                }
+            }
+            
+            // Normalize and filter scanned items (include all scanned items for comparison)
+            const normalizedScanned: Row[] = [];
+            for (const r of scanRes.data ?? []) {
+                const normalized = normalizeBarcode(String((r as any).text));
+                if (include(normalized)) {
+                    // Include all scanned items (both matched and unmatched) for proper comparison
+                    normalizedScanned.push({ text: normalized });
+                }
+            }
+            
+            setExpected(normalizedExpected);
+            setScanned(normalizedScanned);
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             setError(msg);
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [prefixText, include]);
 
     useEffect(() => { 
         refresh(); 
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []); // Only run once on mount
+    }, [refresh]); // Refresh when prefixText changes
 
     const expectedSet = useMemo(() => {
         const s = new Set<string>();
         for (const r of expected) {
-            const v = normalize(r.text);
-            if (include(v)) s.add(v);
+            s.add(r.text); // Already normalized and filtered in refresh
         }
         return s;
-    }, [expected, include, normalize]);
+    }, [expected]);
     const scannedSet = useMemo(() => {
         const s = new Set<string>();
         for (const r of scanned) {
-            const v = normalize(r.text);
-            if (include(v)) s.add(v);
+            s.add(r.text); // Already normalized and filtered in refresh
         }
         return s;
-    }, [scanned, include, normalize]);
+    }, [scanned]);
 
     const matched = useMemo(() => [...expectedSet].filter(t => scannedSet.has(t)), [expectedSet, scannedSet]);
     const missing = useMemo(() => [...expectedSet].filter(t => !scannedSet.has(t)), [expectedSet, scannedSet]);
