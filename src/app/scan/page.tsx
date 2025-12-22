@@ -6,7 +6,7 @@ import { normalizeBarcode } from "../../lib/barcode";
 type ScanItem = { text: string };
 
 export default function ScanPage() {
-    const [prefixText] = useState<string>("2M"); // Keep for filtering, but don't show UI
+    const [prefixText] = useState<string>("1M,2M"); // Keep for filtering, but don't show UI
     const [matched, setMatched] = useState<ScanItem[]>([]);
     const [unmatched, setUnmatched] = useState<ScanItem[]>([]);
     const [status, setStatus] = useState<string>("");

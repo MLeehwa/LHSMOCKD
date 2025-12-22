@@ -6,7 +6,7 @@ import { normalizeBarcode } from "../../lib/barcode";
 type Row = { text: string };
 
 export default function MatchPage() {
-    const [prefixText, setPrefixText] = useState<string>("2M");
+    const [prefixText, setPrefixText] = useState<string>("1M,2M");
     const [loading, setLoading] = useState<boolean>(true); // Start with true to show loading state
     const [error, setError] = useState<string>("");
     const [expected, setExpected] = useState<Row[]>([]); // from mo_ocr_results

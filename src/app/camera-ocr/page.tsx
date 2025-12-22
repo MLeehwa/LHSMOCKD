@@ -29,7 +29,7 @@ export default function CameraOcrPage() {
             for (const r of data ?? []) {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const normalized = normalizeBarcode((r as any).text);
-                if (normalized && normalized.startsWith("2M")) {
+                if (normalized && (normalized.startsWith("1M") || normalized.startsWith("2M"))) {
                     set.add(normalized);
                 }
             }
@@ -136,16 +136,15 @@ export default function CameraOcrPage() {
                 },
             });
 
-            // Extract 2M codes (14 digits: 2M + 12 digits)
-            // Pattern: 2M followed by exactly 12 digits (total 14 characters)
-            // Use word boundary or space to ensure we only get exactly 14 characters
-            const pattern2M14 = /2M\d{12}(?=\s|$|[^0-9A-Za-z])/gi;
+            // Extract 1M and 2M codes (14 digits: 1M/2M + 12 digits)
+            // Pattern: 1M or 2M followed by exactly 12 digits (total 14 characters)
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const allText = (data as any)?.text || "";
             const processedText = postProcessOcrText(allText);
             
-            // Find all 2M codes in the entire OCR text - extract only first 14 characters
-            const allMatches = processedText.match(/2M\d{12}/gi) || [];
+            // Find all 1M and 2M codes in the entire OCR text - extract only first 14 characters
+            const pattern1M2M = /[12]M\d{12}/gi;
+            const allMatches = processedText.match(pattern1M2M) || [];
             const matches: string[] = allMatches.map(m => m.substring(0, 14).toUpperCase());
             
             // Also check structured lines and words for better accuracy
@@ -158,7 +157,7 @@ export default function CameraOcrPage() {
             if (structuredLines && structuredLines.length > 0) {
                 for (const line of structuredLines) {
                     const lineText = postProcessOcrText((line.text || "").trim());
-                    const lineMatches = lineText.match(/2M\d{12}/gi);
+                    const lineMatches = lineText.match(pattern1M2M);
                     if (lineMatches) {
                         // Extract only first 14 characters from each match
                         const extracted14 = lineMatches.map(m => m.substring(0, 14).toUpperCase());
@@ -167,14 +166,14 @@ export default function CameraOcrPage() {
                 }
             }
             
-            // Extract from words (group consecutive words that might form 2M codes)
+            // Extract from words (group consecutive words that might form 1M/2M codes)
             if (words.length > 0) {
                 let wordSequence = "";
                 for (const word of words) {
                     const wordText = postProcessOcrText(String(word.text || ""));
                     wordSequence += wordText;
-                    // Check if sequence contains 2M code
-                    const seqMatches = wordSequence.match(/2M\d{12}/gi);
+                    // Check if sequence contains 1M or 2M code
+                    const seqMatches = wordSequence.match(pattern1M2M);
                     if (seqMatches) {
                         // Extract only first 14 characters from each match
                         const extracted14 = seqMatches.map(m => m.substring(0, 14).toUpperCase());
@@ -188,9 +187,9 @@ export default function CameraOcrPage() {
                 }
             }
             
-            // Remove duplicates and ensure exactly 14 characters
+            // Remove duplicates and ensure exactly 14 characters and starts with 1M or 2M
             const uniqueMatches = Array.from(new Set(matches))
-                .filter(m => m.length === 14 && m.startsWith("2M"));
+                .filter(m => m.length === 14 && (m.startsWith("1M") || m.startsWith("2M")));
             
             // Check if each item exists in mo_ocr_results
             const extracted: OcrItem[] = uniqueMatches.map(match => {
@@ -205,7 +204,7 @@ export default function CameraOcrPage() {
             });
 
             setItems(extracted);
-            setStatus(`OCR 완료: ${extracted.length}개 항목 인식 (2M으로 시작하는 14자리만 추출)`);
+            setStatus(`OCR 완료: ${extracted.length}개 항목 인식 (1M/2M으로 시작하는 14자리만 추출)`);
         } else {
             setImageUrl(null);
             setStatus("이미지 파일만 지원됩니다.");
@@ -254,16 +253,18 @@ export default function CameraOcrPage() {
             const payload = items
                 .map(item => {
                     const normalized = normalizeBarcode(item.text);
+                    // Determine prefix based on normalized text
+                    const prefix = normalized.startsWith("1M") ? "1M" : normalized.startsWith("2M") ? "2M" : "1M,2M";
                     return {
                         text: normalized,
-                        prefixes: "2M",
+                        prefixes: prefix,
                         matched: false // These are unmatched items from printed paper
                     };
                 })
-                .filter(item => item.text && item.text.length > 0 && item.text.startsWith("2M")); // Remove empty or invalid items
+                .filter(item => item.text && item.text.length > 0 && (item.text.startsWith("1M") || item.text.startsWith("2M"))); // Remove empty or invalid items
 
             if (payload.length === 0) {
-                setStatus("저장할 유효한 항목이 없습니다. (빈 항목 또는 2M으로 시작하지 않는 항목 제외)");
+                setStatus("저장할 유효한 항목이 없습니다. (빈 항목 또는 1M/2M으로 시작하지 않는 항목 제외)");
                 setUploading(false);
                 return;
             }
@@ -292,7 +293,7 @@ export default function CameraOcrPage() {
 
     return (
         <div className="w-full max-w-6xl mx-auto space-y-4 px-4 py-6">
-            <h1 className="text-2xl sm:text-3xl font-semibold">카메라 OCR (2M 인식)</h1>
+            <h1 className="text-2xl sm:text-3xl font-semibold">카메라 OCR (1M/2M 인식)</h1>
             
             {status && (
                 <div className="rounded border bg-white p-3 text-sm sm:text-base" style={{ color: '#000000' }}>
@@ -344,7 +345,7 @@ export default function CameraOcrPage() {
                     <div className="flex items-center justify-between mb-4">
                         <div>
                             <h2 className="text-lg font-medium">
-                                인식된 항목 ({items.length}개) - 2M으로 시작하는 14자리만 표시
+                                인식된 항목 ({items.length}개) - 1M/2M으로 시작하는 14자리만 표시
                             </h2>
                             <div className="flex gap-3 mt-2 text-xs">
                                 <span className="text-emerald-700 font-semibold">
@@ -395,7 +396,7 @@ export default function CameraOcrPage() {
                                                 ? "bg-yellow-50 border-yellow-400" 
                                                 : "bg-white border-gray-300"
                                         }`}
-                                        placeholder="2M으로 시작하는 번호"
+                                        placeholder="1M/2M으로 시작하는 번호"
                                         style={{ 
                                             color: '#000000',
                                             fontWeight: 'bold',

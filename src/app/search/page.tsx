@@ -7,7 +7,7 @@ import { normalizeBarcode } from "../../lib/barcode";
 type ScanItem = { text: string };
 
 export default function SearchPage() {
-    const [prefixText, setPrefixText] = useState<string>("2M");
+    const [prefixText, setPrefixText] = useState<string>("1M,2M");
     const [status, setStatus] = useState<string>("");
     const [searchQuery, setSearchQuery] = useState<string>(""); // Search query for filtering list
     const expectedCacheRef = useRef<Set<string>>(new Set());
