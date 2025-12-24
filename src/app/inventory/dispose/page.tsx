@@ -13,6 +13,7 @@ type DisposedItem = {
 export default function DisposePage() {
 	const [prefixText] = useState<string>("1M,2M");
 	const [disposedItems, setDisposedItems] = useState<DisposedItem[]>([]);
+	const [todayCount, setTodayCount] = useState<number>(0);
 	const [status, setStatus] = useState<string>("");
 	const inputRef = useRef<HTMLInputElement | null>(null);
 	const [currentCode, setCurrentCode] = useState<string>("");
@@ -72,11 +73,20 @@ export default function DisposePage() {
 			}
 
 			// Update UI
-			setDisposedItems(prev => [{
+			const newItem = {
 				barcode: normalized,
 				disposed_at: data.disposed_at,
 				received_at: existing.received_at,
-			}, ...prev]);
+			};
+			setDisposedItems(prev => [newItem, ...prev]);
+			
+			// Update today count if disposed today
+			const disposedDate = new Date(data.disposed_at);
+			const today = new Date();
+			if (disposedDate.toDateString() === today.toDateString()) {
+				setTodayCount(prev => prev + 1);
+			}
+			
 			seenRef.current.add(normalized);
 			setStatus(`Disposed: ${normalized}`);
 		} catch (e) {
@@ -152,6 +162,17 @@ export default function DisposePage() {
 
 			setDisposedItems(items);
 			items.forEach(item => seenRef.current.add(item.barcode));
+			
+			// Count today's disposed items
+			const today = new Date();
+			today.setHours(0, 0, 0, 0);
+			const todayCount = items.filter(item => {
+				const disposedDate = new Date(item.disposed_at);
+				disposedDate.setHours(0, 0, 0, 0);
+				return disposedDate.getTime() === today.getTime();
+			}).length;
+			setTodayCount(todayCount);
+			
 			setStatus(`Loaded: ${items.length} disposed items`);
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
@@ -185,20 +206,26 @@ export default function DisposePage() {
 
 	return (
 		<div className="w-full max-w-full mx-auto space-y-3 px-2 sm:px-4">
-			<div className="flex items-center justify-between mb-4">
-				<h1 className="text-xl sm:text-2xl font-semibold">Dispose</h1>
+			<div className="flex items-center justify-between mb-4 gap-2">
+				<h1 className="text-xl sm:text-3xl font-semibold flex-1">Dispose</h1>
 				<Link
 					href="/inventory"
-					className="px-4 py-2 text-sm font-medium rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200"
+					className="px-4 sm:px-6 py-2.5 sm:py-3 text-sm sm:text-base font-semibold rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 active:bg-gray-300 min-h-[44px] sm:min-h-[48px] min-w-[80px] sm:min-w-[100px] flex items-center justify-center touch-manipulation flex-shrink-0"
 				>
 					← Back
 				</Link>
 			</div>
 
-			{/* Stats Card */}
-			<div className="rounded-lg border-2 border-red-400 bg-red-50 p-3 sm:p-4 shadow-md">
-				<div className="text-xs sm:text-sm text-red-700 font-medium mb-1">Disposed Items</div>
-				<div className="text-2xl sm:text-3xl font-bold text-red-800">{disposedItems.length}</div>
+			{/* Stats Cards */}
+			<div className="grid grid-cols-2 gap-3">
+				<div className="rounded-lg border-2 border-red-400 bg-red-50 p-3 sm:p-4 shadow-md">
+					<div className="text-xs sm:text-sm text-red-700 font-medium mb-1">Total Disposed</div>
+					<div className="text-2xl sm:text-3xl font-bold text-red-800">{disposedItems.length}</div>
+				</div>
+				<div className="rounded-lg border-2 border-emerald-400 bg-emerald-50 p-3 sm:p-4 shadow-md">
+					<div className="text-xs sm:text-sm text-emerald-700 font-medium mb-1">Today</div>
+					<div className="text-2xl sm:text-3xl font-bold text-emerald-800">{todayCount}</div>
+				</div>
 			</div>
 
 			{/* Barcode input */}

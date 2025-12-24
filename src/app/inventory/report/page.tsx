@@ -142,11 +142,11 @@ export default function ReportPage() {
 
 	return (
 		<div className="w-full max-w-full mx-auto space-y-4 px-2 sm:px-4">
-			<div className="flex items-center justify-between mb-4">
-				<h1 className="text-xl sm:text-2xl font-semibold">Inventory Report</h1>
+			<div className="flex items-center justify-between mb-4 gap-2">
+				<h1 className="text-xl sm:text-3xl font-semibold flex-1">Inventory Report</h1>
 				<Link
 					href="/inventory"
-					className="px-4 py-2 text-sm font-medium rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200"
+					className="px-4 sm:px-6 py-2.5 sm:py-3 text-sm sm:text-base font-semibold rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 active:bg-gray-300 min-h-[44px] sm:min-h-[48px] min-w-[80px] sm:min-w-[100px] flex items-center justify-center touch-manipulation flex-shrink-0"
 				>
 					← Back
 				</Link>
@@ -194,34 +194,34 @@ export default function ReportPage() {
 			) : null}
 
 			{/* Filter and Export */}
-			<div className="flex items-center justify-between gap-3">
-				<div className="flex gap-2">
+			<div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 w-full">
+				<div className="flex gap-2 sm:gap-3 flex-1 w-full sm:w-auto">
 					<button
 						onClick={() => setFilter("all")}
-						className={`px-4 py-2 text-sm font-medium rounded-md ${
+						className={`px-4 sm:px-6 py-3 sm:py-4 text-sm sm:text-base font-semibold rounded-lg min-h-[48px] flex-1 touch-manipulation ${
 							filter === "all"
 								? "bg-gray-900 text-white"
-								: "bg-gray-100 text-gray-700 hover:bg-gray-200"
+								: "bg-gray-100 text-gray-700 hover:bg-gray-200 active:bg-gray-300"
 						}`}
 					>
 						All
 					</button>
 					<button
 						onClick={() => setFilter("active")}
-						className={`px-4 py-2 text-sm font-medium rounded-md ${
+						className={`px-4 sm:px-6 py-3 sm:py-4 text-sm sm:text-base font-semibold rounded-lg min-h-[48px] flex-1 touch-manipulation ${
 							filter === "active"
 								? "bg-emerald-600 text-white"
-								: "bg-gray-100 text-gray-700 hover:bg-gray-200"
+								: "bg-gray-100 text-gray-700 hover:bg-gray-200 active:bg-gray-300"
 						}`}
 					>
 						Active
 					</button>
 					<button
 						onClick={() => setFilter("disposed")}
-						className={`px-4 py-2 text-sm font-medium rounded-md ${
+						className={`px-4 sm:px-6 py-3 sm:py-4 text-sm sm:text-base font-semibold rounded-lg min-h-[48px] flex-1 touch-manipulation ${
 							filter === "disposed"
 								? "bg-red-600 text-white"
-								: "bg-gray-100 text-gray-700 hover:bg-gray-200"
+								: "bg-gray-100 text-gray-700 hover:bg-gray-200 active:bg-gray-300"
 						}`}
 					>
 						Disposed
@@ -230,10 +230,10 @@ export default function ReportPage() {
 				<button
 					onClick={exportToExcel}
 					disabled={filteredInventory.length === 0}
-					className={`px-4 py-2 text-sm font-medium rounded-md ${
+					className={`px-4 sm:px-6 py-3 sm:py-4 text-sm sm:text-base font-semibold rounded-lg min-h-[48px] w-full sm:w-auto sm:min-w-[140px] touch-manipulation ${
 						filteredInventory.length === 0
 							? "bg-gray-300 text-gray-500 cursor-not-allowed"
-							: "bg-emerald-600 text-white hover:bg-emerald-700"
+							: "bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-800"
 					}`}
 				>
 					📥 Export Excel

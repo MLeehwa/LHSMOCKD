@@ -12,6 +12,7 @@ type ReceivedItem = {
 export default function ReceivePage() {
 	const [prefixText] = useState<string>("1M,2M");
 	const [receivedItems, setReceivedItems] = useState<ReceivedItem[]>([]);
+	const [todayCount, setTodayCount] = useState<number>(0);
 	const [status, setStatus] = useState<string>("");
 	const inputRef = useRef<HTMLInputElement | null>(null);
 	const [currentCode, setCurrentCode] = useState<string>("");
@@ -76,10 +77,19 @@ export default function ReceivePage() {
 			}
 
 			// Update UI
-			setReceivedItems(prev => [{
+			const newItem = {
 				barcode: normalized,
 				received_at: data.received_at,
-			}, ...prev]);
+			};
+			setReceivedItems(prev => [newItem, ...prev]);
+			
+			// Update today count if received today
+			const receivedDate = new Date(data.received_at);
+			const today = new Date();
+			if (receivedDate.toDateString() === today.toDateString()) {
+				setTodayCount(prev => prev + 1);
+			}
+			
 			setStatus(`Received: ${normalized}`);
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
@@ -153,6 +163,17 @@ export default function ReceivePage() {
 
 			setReceivedItems(items);
 			items.forEach(item => seenRef.current.add(item.barcode));
+			
+			// Count today's received items
+			const today = new Date();
+			today.setHours(0, 0, 0, 0);
+			const todayCount = items.filter(item => {
+				const receivedDate = new Date(item.received_at);
+				receivedDate.setHours(0, 0, 0, 0);
+				return receivedDate.getTime() === today.getTime();
+			}).length;
+			setTodayCount(todayCount);
+			
 			setStatus(`Loaded: ${items.length} received items`);
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
@@ -178,20 +199,26 @@ export default function ReceivePage() {
 
 	return (
 		<div className="w-full max-w-full mx-auto space-y-3 px-2 sm:px-4">
-			<div className="flex items-center justify-between mb-4">
-				<h1 className="text-xl sm:text-2xl font-semibold">Receive</h1>
+			<div className="flex items-center justify-between mb-4 gap-2">
+				<h1 className="text-xl sm:text-3xl font-semibold flex-1">Receive</h1>
 				<Link
 					href="/inventory"
-					className="px-4 py-2 text-sm font-medium rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200"
+					className="px-4 sm:px-6 py-2.5 sm:py-3 text-sm sm:text-base font-semibold rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 active:bg-gray-300 min-h-[44px] sm:min-h-[48px] min-w-[80px] sm:min-w-[100px] flex items-center justify-center touch-manipulation flex-shrink-0"
 				>
 					← Back
 				</Link>
 			</div>
 
-			{/* Stats Card */}
-			<div className="rounded-lg border-2 border-blue-400 bg-blue-50 p-3 sm:p-4 shadow-md">
-				<div className="text-xs sm:text-sm text-blue-700 font-medium mb-1">Received Items</div>
-				<div className="text-2xl sm:text-3xl font-bold text-blue-800">{receivedItems.length}</div>
+			{/* Stats Cards */}
+			<div className="grid grid-cols-2 gap-3">
+				<div className="rounded-lg border-2 border-blue-400 bg-blue-50 p-3 sm:p-4 shadow-md">
+					<div className="text-xs sm:text-sm text-blue-700 font-medium mb-1">Total Received</div>
+					<div className="text-2xl sm:text-3xl font-bold text-blue-800">{receivedItems.length}</div>
+				</div>
+				<div className="rounded-lg border-2 border-emerald-400 bg-emerald-50 p-3 sm:p-4 shadow-md">
+					<div className="text-xs sm:text-sm text-emerald-700 font-medium mb-1">Today</div>
+					<div className="text-2xl sm:text-3xl font-bold text-emerald-800">{todayCount}</div>
+				</div>
 			</div>
 
 			{/* Barcode input */}
