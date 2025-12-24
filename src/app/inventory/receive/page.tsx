@@ -44,16 +44,19 @@ export default function ReceivePage() {
 		seenRef.current.add(normalized);
 
 		try {
-			// Check if already received (not disposed)
+			// Check if already received (barcode is unique - cannot be received twice)
 			const { data: existing } = await supabase
 				.from("mo_lq2_inventory")
 				.select("id, disposed_at")
 				.eq("barcode", normalized)
-				.is("disposed_at", null)
 				.single();
 
 			if (existing) {
-				setStatus(`Already received: ${normalized}`);
+				if (existing.disposed_at) {
+					setStatus(`Already received and disposed: ${normalized}`);
+				} else {
+					setStatus(`Already received: ${normalized}`);
+				}
 				return;
 			}
 

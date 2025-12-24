@@ -157,6 +157,16 @@ CREATE TABLE IF NOT EXISTS public.mo_lq2_inventory (
   prefixes TEXT
 );
 
+-- Unique constraint for barcode (one barcode can only be received once)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='mo_lq2_inventory_barcode_unique'
+  ) THEN
+    CREATE UNIQUE INDEX mo_lq2_inventory_barcode_unique ON public.mo_lq2_inventory (barcode);
+  END IF;
+END $$;
+
 -- Index for barcode lookups
 DO $$
 BEGIN
