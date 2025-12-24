@@ -146,3 +146,73 @@ BEGIN
   END IF;
 END $$;
 
+-- Inventory table for receiving and disposing products
+CREATE TABLE IF NOT EXISTS public.mo_lq2_inventory (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  barcode TEXT NOT NULL,
+  received_at TIMESTAMPTZ DEFAULT NOW(),
+  disposed_at TIMESTAMPTZ,
+  prefixes TEXT
+);
+
+-- Index for barcode lookups
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='mo_lq2_inventory_barcode_idx'
+  ) THEN
+    CREATE INDEX mo_lq2_inventory_barcode_idx ON public.mo_lq2_inventory (barcode);
+  END IF;
+END $$;
+
+-- Index for active inventory (not disposed)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='mo_lq2_inventory_active_idx'
+  ) THEN
+    CREATE INDEX mo_lq2_inventory_active_idx ON public.mo_lq2_inventory (barcode, disposed_at) WHERE disposed_at IS NULL;
+  END IF;
+END $$;
+
+-- Enable RLS
+ALTER TABLE public.mo_lq2_inventory ENABLE ROW LEVEL SECURITY;
+
+-- Grant permissions
+GRANT USAGE ON SCHEMA public TO anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.mo_lq2_inventory TO anon;
+
+-- Policies for inventory
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='mo_lq2_inventory' AND policyname='allow anon all'
+  ) THEN
+    CREATE POLICY "allow anon all" ON public.mo_lq2_inventory FOR ALL TO anon USING (true) WITH CHECK (true);
+  END IF;
+END $$;
+
+-- Function to update updated_at timestamp
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to auto-update updated_at
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger WHERE tgname = 'update_mo_lq2_inventory_updated_at'
+  ) THEN
+    CREATE TRIGGER update_mo_lq2_inventory_updated_at
+    BEFORE UPDATE ON public.mo_lq2_inventory
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+END $$;
+
