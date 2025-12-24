@@ -100,20 +100,32 @@ export default function SearchPage() {
     // Load scanned items from database on page load
     const loadScannedItems = useCallback(async () => {
         try {
+            // Load all items and filter by prefix client-side (to handle "1M", "2M", "1M,2M" formats)
             const { data, error } = await supabase
                 .from("mo_scan_items")
-                .select("text, matched")
-                .eq("prefixes", prefixText);
+                .select("text, matched, prefixes");
             
             if (error) throw error;
             
             const loadedMatched: ScanItem[] = [];
             const loadedUnmatched: ScanItem[] = [];
+            const allowedPrefixesList = allowedPrefixes();
             
             for (const item of data ?? []) {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const normalized = normalizeBarcode((item as any).text);
                 if (!shouldInclude(normalized)) continue;
+                
+                // Check if the item's prefix matches our allowed prefixes
+                // Item can have "1M", "2M", or "1M,2M" as prefix
+                const itemPrefix = String((item as any).prefixes || "");
+                const itemPrefixes = itemPrefix.split(",").map((p: string) => p.trim());
+                const hasMatchingPrefix = allowedPrefixesList.length === 0 || 
+                    allowedPrefixesList.some(allowed => 
+                        itemPrefixes.some(item => item === allowed) || itemPrefix === prefixText
+                    );
+                
+                if (!hasMatchingPrefix) continue;
                 
                 seenRef.current.add(normalized);
                 
@@ -498,12 +510,11 @@ export default function SearchPage() {
             
             // If the original unmatchedText was different from normalized, update it in scan_items too
             if (normalizeBarcode(unmatchedText) !== normalizedUnmatched) {
-                // Delete old unmatched item
+                // Delete old unmatched item (text is unique, so no prefix filter needed)
                 await supabase
                     .from("mo_scan_items")
                     .delete()
-                    .eq("text", unmatchedText)
-                    .eq("prefixes", prefixText);
+                    .eq("text", unmatchedText);
                 
                 // Remove from UI
                 setUnmatched(prev => prev.filter(item => item.text !== unmatchedText));
@@ -639,12 +650,11 @@ export default function SearchPage() {
         if (!confirm(`"${text}" 항목을 삭제하시겠습니까?`)) return;
         
         try {
-            // Delete from database
+            // Delete from database (text is unique, so no prefix filter needed)
             await supabase
                 .from("mo_scan_items")
                 .delete()
-                .eq("text", text)
-                .eq("prefixes", prefixText);
+                .eq("text", text);
             
             // Remove from UI
             setUnmatched(prev => prev.filter(item => item.text !== text));
@@ -741,12 +751,11 @@ export default function SearchPage() {
                 return;
             }
 
-            // Delete old item from database
+            // Delete old item from database (text is unique, so no prefix filter needed)
             await supabase
                 .from("mo_scan_items")
                 .delete()
-                .eq("text", oldText)
-                .eq("prefixes", prefixText);
+                .eq("text", oldText);
 
             // Check if new text matches expected
             const exists = expectedCacheRef.current.has(normalized);

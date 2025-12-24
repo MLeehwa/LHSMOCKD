@@ -161,20 +161,32 @@ export default function ScanPage() {
     // Load scanned items from database on page load
     const loadScannedItems = useCallback(async () => {
         try {
+            // Load all items and filter by prefix client-side (to handle "1M", "2M", "1M,2M" formats)
             const { data, error } = await supabase
                 .from("mo_scan_items")
-                .select("text, matched")
-                .eq("prefixes", prefixText);
+                .select("text, matched, prefixes");
             
             if (error) throw error;
             
             const loadedMatched: ScanItem[] = [];
             const loadedUnmatched: ScanItem[] = [];
+            const allowedPrefixesList = allowedPrefixes();
             
             for (const item of data ?? []) {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const normalized = normalizeBarcode((item as any).text);
                 if (!shouldInclude(normalized)) continue;
+                
+                // Check if the item's prefix matches our allowed prefixes
+                // Item can have "1M", "2M", or "1M,2M" as prefix
+                const itemPrefix = String((item as any).prefixes || "");
+                const itemPrefixes = itemPrefix.split(",").map((p: string) => p.trim());
+                const hasMatchingPrefix = allowedPrefixesList.length === 0 || 
+                    allowedPrefixesList.some(allowed => 
+                        itemPrefixes.some(item => item === allowed) || itemPrefix === prefixText
+                    );
+                
+                if (!hasMatchingPrefix) continue;
                 
                 seenRef.current.add(normalized);
                 

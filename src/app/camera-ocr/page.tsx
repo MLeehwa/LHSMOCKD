@@ -327,6 +327,21 @@ export default function CameraOcrPage() {
                 </label>
             </div>
 
+            {/* Confirm Button - Always visible */}
+            <div className="rounded border bg-white p-4">
+                <button
+                    onClick={handleConfirm}
+                    disabled={uploading || items.length === 0}
+                    className={`w-full px-4 py-3 rounded font-medium text-lg ${
+                        uploading || items.length === 0
+                            ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                            : "bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-800"
+                    }`}
+                >
+                    {uploading ? "저장 중..." : items.length === 0 ? "인식된 항목이 없습니다" : `확정 (${items.length}개 항목 저장)`}
+                </button>
+            </div>
+
             {/* Image Preview */}
             {imageUrl && (
                 <div className="rounded border bg-white p-4">
@@ -340,13 +355,13 @@ export default function CameraOcrPage() {
             )}
 
             {/* OCR Results List */}
-            {items.length > 0 && (
-                <div className="rounded border bg-white p-4">
-                    <div className="flex items-center justify-between mb-4">
-                        <div>
-                            <h2 className="text-lg font-medium">
-                                인식된 항목 ({items.length}개) - 1M/2M으로 시작하는 14자리만 표시
-                            </h2>
+            <div className="rounded border bg-white p-4">
+                <div className="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 className="text-lg font-medium">
+                            인식된 항목 ({items.length}개) - 1M/2M으로 시작하는 14자리만 표시
+                        </h2>
+                        {items.length > 0 && (
                             <div className="flex gap-3 mt-2 text-xs">
                                 <span className="text-emerald-700 font-semibold">
                                     매칭됨: {items.filter(i => i.matched).length}개
@@ -355,19 +370,22 @@ export default function CameraOcrPage() {
                                     미매칭: {items.filter(i => !i.matched).length}개
                                 </span>
                             </div>
-                        </div>
-                        <button
-                            onClick={handleConfirm}
-                            disabled={uploading}
-                            className={`px-4 py-2 rounded font-medium ${
-                                uploading
-                                    ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                                    : "bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-800"
-                            }`}
-                        >
-                            {uploading ? "저장 중..." : "확정"}
-                        </button>
+                        )}
                     </div>
+                    <button
+                        onClick={handleConfirm}
+                        disabled={uploading || items.length === 0}
+                        className={`px-4 py-2 rounded font-medium ${
+                            uploading || items.length === 0
+                                ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                                : "bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-800"
+                        }`}
+                    >
+                        {uploading ? "저장 중..." : "확정"}
+                    </button>
+                </div>
+                
+                {items.length > 0 ? (
                     
                     <div className="space-y-2 max-h-[60vh] overflow-auto">
                         {items.map((item, index) => {
@@ -428,8 +446,12 @@ export default function CameraOcrPage() {
                             );
                         })}
                     </div>
-                </div>
-            )}
+                ) : (
+                    <div className="text-center py-8 text-gray-500">
+                        <p>이미지를 업로드하거나 카메라로 촬영하여 OCR을 실행하세요.</p>
+                    </div>
+                )}
+            </div>
         </div>
     );
 }

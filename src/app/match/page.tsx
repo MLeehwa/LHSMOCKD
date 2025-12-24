@@ -26,11 +26,12 @@ export default function MatchPage() {
             const expRes = await supabase.from("mo_ocr_results").select("text");
             if (expRes.error) throw expRes.error;
             
-            // Load scanned from mo_scan_items with prefix filter (same as SEARCH page)
+            // Load scanned from mo_scan_items - need to handle multiple prefix formats
+            // Some items have "1M", "2M" individually, others have "1M,2M"
+            // So we need to get all items and filter client-side
             const scanRes = await supabase
                 .from("mo_scan_items")
-                .select("text, matched")
-                .eq("prefixes", prefixText);
+                .select("text, matched, prefixes");
             if (scanRes.error) throw scanRes.error;
             
             // Normalize and filter expected items
@@ -43,10 +44,22 @@ export default function MatchPage() {
             }
             
             // Normalize and filter scanned items (include all scanned items for comparison)
+            // Also check if the item's prefix matches our allowed prefixes
             const normalizedScanned: Row[] = [];
             for (const r of scanRes.data ?? []) {
                 const normalized = normalizeBarcode(String((r as any).text));
-                if (include(normalized)) {
+                if (!include(normalized)) continue;
+                
+                // Check if the item's prefix matches our allowed prefixes
+                // Item can have "1M", "2M", or "1M,2M" as prefix
+                const itemPrefix = String((r as any).prefixes || "");
+                const itemPrefixes = itemPrefix.split(",").map((p: string) => p.trim());
+                const hasMatchingPrefix = allowedPrefixes.length === 0 || 
+                    allowedPrefixes.some(allowed => 
+                        itemPrefixes.some(item => item === allowed || itemPrefix === prefixText)
+                    );
+                
+                if (hasMatchingPrefix) {
                     // Include all scanned items (both matched and unmatched) for proper comparison
                     normalizedScanned.push({ text: normalized });
                 }
