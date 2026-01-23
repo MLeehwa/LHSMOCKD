@@ -46,34 +46,72 @@ export default function ARNPage() {
 		}
 	}, []);
 
-	// Save expected barcodes to database
-	const handleSaveExpectedBarcodes = useCallback(async (barcodes: string[]) => {
+	// Save expected barcodes to database (accumulate, don't replace)
+	// Clear all expected barcodes
+	const handleClearAll = useCallback(async () => {
+		if (!confirm("Clear all expected barcodes? This cannot be undone.")) return;
+		
 		setIsLoading(true);
 		try {
-			// Clear existing expected barcodes
-			const { error: deleteError } = await supabase
+			const { error } = await supabase
 				.from("mo_lq2_expected_barcodes")
 				.delete()
 				.neq("id", 0);
 
-			if (deleteError) throw deleteError;
+			if (error) throw error;
 
-			// Insert new expected barcodes
-			const normalizedBarcodes = barcodes.map(barcode => ({
-				barcode: normalizeBarcode(barcode),
-				received: false,
-				uploaded_at: new Date().toISOString(),
-			}));
+			setExpectedBarcodes([]);
+			setStatus("✅ All expected barcodes cleared");
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			setStatus(`❌ Failed to clear: ${msg}`);
+			console.error("Failed to clear", e);
+		} finally {
+			setIsLoading(false);
+		}
+	}, []);
 
-			const { error: insertError } = await supabase
+	const handleSaveExpectedBarcodes = useCallback(async (barcodes: string[]) => {
+		setIsLoading(true);
+		try {
+			// Get existing barcodes to check for duplicates
+			const { data: existingData, error: fetchError } = await supabase
 				.from("mo_lq2_expected_barcodes")
-				.insert(normalizedBarcodes);
+				.select("barcode");
 
-			if (insertError) throw insertError;
+			if (fetchError) throw fetchError;
+
+			const existingBarcodes = new Set((existingData || []).map(item => item.barcode));
+
+			// Filter out duplicates - only insert new barcodes
+			const normalizedBarcodes = barcodes
+				.map(barcode => normalizeBarcode(barcode))
+				.filter(barcode => !existingBarcodes.has(barcode))
+				.map(barcode => ({
+					barcode: barcode,
+					received: false,
+					uploaded_at: new Date().toISOString(),
+				}));
+
+			const duplicateCount = barcodes.length - normalizedBarcodes.length;
+
+			// Insert only new barcodes
+			if (normalizedBarcodes.length > 0) {
+				const { error: insertError } = await supabase
+					.from("mo_lq2_expected_barcodes")
+					.insert(normalizedBarcodes);
+
+				if (insertError) throw insertError;
+			}
 
 			// Reload expected barcodes
 			await loadExpectedBarcodes();
-			setStatus(`✅ Successfully saved ${barcodes.length} expected barcodes`);
+			
+			let statusMsg = `✅ Successfully added ${normalizedBarcodes.length} expected barcodes`;
+			if (duplicateCount > 0) {
+				statusMsg += ` (${duplicateCount} already exist, skipped)`;
+			}
+			setStatus(statusMsg);
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
 			setStatus(`❌ Failed to save: ${msg}`);
@@ -129,6 +167,20 @@ export default function ARNPage() {
 					onSave={handleSaveExpectedBarcodes}
 					initialData={[]}
 				/>
+				
+				{totalCount > 0 && (
+					<button
+						onClick={handleClearAll}
+						disabled={isLoading}
+						className={`w-full px-4 py-3 text-sm font-semibold rounded-lg transition-colors ${
+							isLoading
+								? "bg-gray-300 text-gray-500 cursor-not-allowed"
+								: "bg-red-600 text-white hover:bg-red-700 active:bg-red-800"
+						}`}
+					>
+						{isLoading ? "Processing..." : "Clear All Expected Barcodes"}
+					</button>
+				)}
 			</div>
 
 			{/* Expected Barcodes List */}
