@@ -19,6 +19,7 @@ const lq2Nav = [
 	{ href: "/inventory/receive", label: "RECEIVE" },
 	{ href: "/inventory/dispose", label: "DISPOSE" },
 	{ href: "/inventory/report", label: "INVENTORY REPORT" },
+	{ href: "/inventory/arn", label: "ARN" },
 ];
 
 export default function TopNav() {

@@ -226,3 +226,48 @@ BEGIN
   END IF;
 END $$;
 
+-- Expected barcodes table for pre-registering incoming inventory
+CREATE TABLE IF NOT EXISTS public.mo_lq2_expected_barcodes (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  barcode TEXT NOT NULL,
+  uploaded_at TIMESTAMPTZ DEFAULT NOW(),
+  received BOOLEAN DEFAULT FALSE
+);
+
+-- Unique constraint for expected barcode
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='mo_lq2_expected_barcodes_barcode_unique'
+  ) THEN
+    CREATE UNIQUE INDEX mo_lq2_expected_barcodes_barcode_unique ON public.mo_lq2_expected_barcodes (barcode);
+  END IF;
+END $$;
+
+-- Index for barcode lookups
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='mo_lq2_expected_barcodes_barcode_idx'
+  ) THEN
+    CREATE INDEX mo_lq2_expected_barcodes_barcode_idx ON public.mo_lq2_expected_barcodes (barcode);
+  END IF;
+END $$;
+
+-- Enable RLS
+ALTER TABLE public.mo_lq2_expected_barcodes ENABLE ROW LEVEL SECURITY;
+
+-- Grant permissions
+GRANT USAGE ON SCHEMA public TO anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.mo_lq2_expected_barcodes TO anon;
+
+-- Policies for expected barcodes
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='mo_lq2_expected_barcodes' AND policyname='allow anon all'
+  ) THEN
+    CREATE POLICY "allow anon all" ON public.mo_lq2_expected_barcodes FOR ALL TO anon USING (true) WITH CHECK (true);
+  END IF;
+END $$;
