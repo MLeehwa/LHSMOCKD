@@ -13,6 +13,7 @@ const ckdNav = [
 const inventoryNav = [
 	{ href: "/inventory/receive", label: "LQ2" },
 	{ href: "/ckd/scan", label: "CKD" },
+	{ href: "/tm", label: "TM" },
 ];
 
 const lq2Nav = [
@@ -22,27 +23,33 @@ const lq2Nav = [
 	{ href: "/inventory/arn", label: "ARN" },
 ];
 
+const tmNav = [
+	{ href: "/tm/upload", label: "UPLOAD" },
+	{ href: "/tm/scanner", label: "SCANNER" },
+];
+
 export default function TopNav() {
 	const pathname = usePathname();
 	const isInventoryPath = pathname?.startsWith("/inventory");
 	const isCkdPath = pathname?.startsWith("/ckd");
+	const isTmPath = pathname?.startsWith("/tm");
 	
 	return (
 		<nav className="sticky top-0 z-50 w-full bg-white border-b-2 border-gray-300 shadow-md">
 			{/* 첫 번째 행: LEEHWA-MGA, LQ2, CKD */}
 			<div className="flex items-center px-2 sm:px-6 py-2 sm:py-3 gap-2 overflow-x-auto border-b border-gray-200">
-				<div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
+				<div className="flex items-center gap-2 sm:gap-4 shrink-0">
 					<div className="text-base sm:text-xl font-bold text-gray-900 whitespace-nowrap">LEEHWA-MGA</div>
 					{/* 구분선 */}
-					<div className="h-8 w-px bg-gray-300 flex-shrink-0"></div>
+					<div className="h-8 w-px bg-gray-300 shrink-0"></div>
 					{/* 재고관리 메뉴 */}
 					{inventoryNav.map(({ href, label }) => {
-						const active = label === "LQ2" ? isInventoryPath : isCkdPath;
+						const active = label === "LQ2" ? isInventoryPath : label === "CKD" ? isCkdPath : label === "TM" ? isTmPath : false;
 						return (
 							<Link
 								key={href}
 								href={href}
-								className={`px-3 py-2.5 sm:px-6 sm:py-3.5 text-sm sm:text-lg font-semibold rounded-lg transition-colors min-w-[60px] sm:min-w-[90px] min-h-[44px] sm:min-h-[48px] text-center flex items-center justify-center touch-manipulation flex-shrink-0 ${
+								className={`px-3 py-2.5 sm:px-6 sm:py-3.5 text-sm sm:text-lg font-semibold rounded-lg transition-colors min-w-[60px] sm:min-w-[90px] min-h-[44px] sm:min-h-[48px] text-center flex items-center justify-center touch-manipulation shrink-0 ${
 									active
 										? "bg-blue-600 text-white shadow-md"
 										: "bg-blue-50 text-blue-700 border-2 border-blue-300 hover:bg-blue-100 active:bg-blue-200"
@@ -58,14 +65,14 @@ export default function TopNav() {
 			{/* 두 번째 행: RECEIVE, DISPOSE, INVENTORY REPORT (LQ2 경로일 때만 표시) */}
 			{isInventoryPath && (
 				<div className="flex items-center px-2 sm:px-6 py-2 sm:py-3 gap-2 overflow-x-auto">
-					<div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+					<div className="flex items-center gap-2 sm:gap-3 shrink-0">
 						{lq2Nav.map(({ href, label }) => {
 							const active = pathname === href || (pathname === "/inventory" && href === "/inventory/receive");
 							return (
 								<Link
 									key={href}
 									href={href}
-									className={`px-3 py-2.5 sm:px-5 sm:py-3.5 text-sm sm:text-base font-semibold rounded-lg transition-colors min-w-[60px] sm:min-w-[80px] min-h-[44px] sm:min-h-[48px] text-center flex items-center justify-center touch-manipulation flex-shrink-0 ${
+									className={`px-3 py-2.5 sm:px-5 sm:py-3.5 text-sm sm:text-base font-semibold rounded-lg transition-colors min-w-[60px] sm:min-w-[80px] min-h-[44px] sm:min-h-[48px] text-center flex items-center justify-center touch-manipulation shrink-0 ${
 										active
 											? "bg-gray-900 text-white shadow-md"
 											: "bg-gray-100 text-gray-700 hover:bg-gray-200 active:bg-gray-300"
@@ -82,14 +89,38 @@ export default function TopNav() {
 			{/* 세 번째 행: OCR, SCAN, SEARCH, MATCH, CAMERA (CKD 경로일 때만 표시) */}
 			{isCkdPath && (
 				<div className="flex items-center px-2 sm:px-6 py-2 sm:py-3 gap-2 overflow-x-auto">
-					<div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+					<div className="flex items-center gap-2 sm:gap-3 shrink-0">
 						{ckdNav.map(({ href, label }) => {
 							const active = pathname === href || (pathname === "/ckd" && href === "/ckd/scan");
 							return (
 								<Link
 									key={href}
 									href={href}
-									className={`px-3 py-2.5 sm:px-5 sm:py-3.5 text-sm sm:text-base font-semibold rounded-lg transition-colors min-w-[60px] sm:min-w-[80px] min-h-[44px] sm:min-h-[48px] text-center flex items-center justify-center touch-manipulation flex-shrink-0 ${
+									className={`px-3 py-2.5 sm:px-5 sm:py-3.5 text-sm sm:text-base font-semibold rounded-lg transition-colors min-w-[60px] sm:min-w-[80px] min-h-[44px] sm:min-h-[48px] text-center flex items-center justify-center touch-manipulation shrink-0 ${
+										active
+											? "bg-gray-900 text-white shadow-md"
+											: "bg-gray-100 text-gray-700 hover:bg-gray-200 active:bg-gray-300"
+									}`}
+								>
+									{label}
+								</Link>
+							);
+						})}
+					</div>
+				</div>
+			)}
+			
+			{/* 네 번째 행: UPLOAD, SCANNER (TM 경로일 때만 표시) */}
+			{isTmPath && (
+				<div className="flex items-center px-2 sm:px-6 py-2 sm:py-3 gap-2 overflow-x-auto">
+					<div className="flex items-center gap-2 sm:gap-3 shrink-0">
+						{tmNav.map(({ href, label }) => {
+							const active = pathname === href || (pathname === "/tm" && href === "/tm/upload");
+							return (
+								<Link
+									key={href}
+									href={href}
+									className={`px-3 py-2.5 sm:px-5 sm:py-3.5 text-sm sm:text-base font-semibold rounded-lg transition-colors min-w-[60px] sm:min-w-[80px] min-h-[44px] sm:min-h-[48px] text-center flex items-center justify-center touch-manipulation shrink-0 ${
 										active
 											? "bg-gray-900 text-white shadow-md"
 											: "bg-gray-100 text-gray-700 hover:bg-gray-200 active:bg-gray-300"

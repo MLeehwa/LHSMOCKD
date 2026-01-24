@@ -271,3 +271,105 @@ BEGIN
     CREATE POLICY "allow anon all" ON public.mo_lq2_expected_barcodes FOR ALL TO anon USING (true) WITH CHECK (true);
   END IF;
 END $$;
+
+-- TM barcodes table (12로 시작하는 바코드 리스트)
+CREATE TABLE IF NOT EXISTS public.mo_tm_barcodes (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  barcode TEXT NOT NULL,
+  product_date DATE NOT NULL
+);
+
+-- Unique constraint for TM barcode
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='mo_tm_barcodes_unique'
+  ) THEN
+    CREATE UNIQUE INDEX mo_tm_barcodes_unique ON public.mo_tm_barcodes (barcode, product_date);
+  END IF;
+END $$;
+
+-- Index for barcode lookups
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='mo_tm_barcodes_barcode_idx'
+  ) THEN
+    CREATE INDEX mo_tm_barcodes_barcode_idx ON public.mo_tm_barcodes (barcode);
+  END IF;
+END $$;
+
+-- Index for product_date lookups
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='mo_tm_barcodes_date_idx'
+  ) THEN
+    CREATE INDEX mo_tm_barcodes_date_idx ON public.mo_tm_barcodes (product_date);
+  END IF;
+END $$;
+
+-- Enable RLS
+ALTER TABLE public.mo_tm_barcodes ENABLE ROW LEVEL SECURITY;
+
+-- Grant permissions
+GRANT USAGE ON SCHEMA public TO anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.mo_tm_barcodes TO anon;
+
+-- Policies for TM barcodes
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='mo_tm_barcodes' AND policyname='allow anon all'
+  ) THEN
+    CREATE POLICY "allow anon all" ON public.mo_tm_barcodes FOR ALL TO anon USING (true) WITH CHECK (true);
+  END IF;
+END $$;
+
+-- TM scans table (스캔 기록)
+CREATE TABLE IF NOT EXISTS public.mo_tm_scans (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  barcode TEXT NOT NULL,
+  scan_date DATE DEFAULT CURRENT_DATE,
+  is_return BOOLEAN NOT NULL
+);
+
+-- Index for scan date lookups
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='mo_tm_scans_date_idx'
+  ) THEN
+    CREATE INDEX mo_tm_scans_date_idx ON public.mo_tm_scans (scan_date);
+  END IF;
+END $$;
+
+-- Index for barcode lookups
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='mo_tm_scans_barcode_idx'
+  ) THEN
+    CREATE INDEX mo_tm_scans_barcode_idx ON public.mo_tm_scans (barcode);
+  END IF;
+END $$;
+
+-- Enable RLS
+ALTER TABLE public.mo_tm_scans ENABLE ROW LEVEL SECURITY;
+
+-- Grant permissions
+GRANT USAGE ON SCHEMA public TO anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.mo_tm_scans TO anon;
+
+-- Policies for TM scans
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='mo_tm_scans' AND policyname='allow anon all'
+  ) THEN
+    CREATE POLICY "allow anon all" ON public.mo_tm_scans FOR ALL TO anon USING (true) WITH CHECK (true);
+  END IF;
+END $$;
+
