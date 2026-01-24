@@ -24,8 +24,8 @@ const lq2Nav = [
 ];
 
 const tmNav = [
-	{ href: "/tm/upload", label: "UPLOAD" },
 	{ href: "/tm/scanner", label: "SCANNER" },
+	{ href: "/tm/upload", label: "UPLOAD" },
 ];
 
 export default function TopNav() {
