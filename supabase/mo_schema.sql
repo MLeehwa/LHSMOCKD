@@ -277,7 +277,8 @@ CREATE TABLE IF NOT EXISTS public.mo_tm_barcodes (
   id BIGSERIAL PRIMARY KEY,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   barcode TEXT NOT NULL,
-  product_date DATE NOT NULL
+  product_date DATE NOT NULL,
+  pallet_no TEXT
 );
 
 -- Unique constraint for TM barcode
@@ -307,6 +308,16 @@ BEGIN
     SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='mo_tm_barcodes_date_idx'
   ) THEN
     CREATE INDEX mo_tm_barcodes_date_idx ON public.mo_tm_barcodes (product_date);
+  END IF;
+END $$;
+
+-- Index for pallet_no lookups
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='mo_tm_barcodes_pallet_idx'
+  ) THEN
+    CREATE INDEX mo_tm_barcodes_pallet_idx ON public.mo_tm_barcodes (pallet_no);
   END IF;
 END $$;
 

@@ -9,11 +9,18 @@ type ScanRecord = {
 	scan_date: string;
 	is_return: boolean;
 	scanned_at: string;
+	pallet_no?: string; // 팔렛 번호
 	date_count?: number; // 해당 날짜의 총 개수
+	pallet_count?: number; // 해당 팔렛의 총 개수
 };
 
 type DateStats = {
 	date: string;
+	count: number;
+};
+
+type PalletStats = {
+	palletNo: string;
 	count: number;
 };
 
@@ -22,6 +29,7 @@ export default function TMScannerPage() {
 	const [isReturn, setIsReturn] = useState<boolean | null>(null);
 	const [lastScanned, setLastScanned] = useState<ScanRecord | null>(null);
 	const [dateStats, setDateStats] = useState<DateStats | null>(null);
+	const [palletStats, setPalletStats] = useState<PalletStats | null>(null);
 	const [status, setStatus] = useState<string>("");
 	const inputRef = useRef<HTMLInputElement | null>(null);
 	const [autoSubmit] = useState<boolean>(true);
@@ -66,20 +74,23 @@ export default function TMScannerPage() {
 			// Check if barcode exists in TM barcodes
 			const { data: tmData, error: tmError } = await supabase
 				.from("mo_tm_barcodes")
-				.select("barcode, product_date")
+				.select("barcode, product_date, pallet_no")
 				.eq("barcode", normalized)
 				.single();
 
 			const isReturnItem = !!tmData;
 			setIsReturn(isReturnItem);
 
-			// Get date from TM barcode
+			// Get date and pallet info from TM barcode
 			let scanDate = new Date().toISOString().split('T')[0];
 			let dateCount = 0;
+			let palletNo = "";
+			let palletCount = 0;
 
 			if (tmData) {
 				// Use product_date directly
 				scanDate = tmData.product_date;
+				palletNo = tmData.pallet_no || "";
 				
 				// Count total items with same product_date
 				const { data: countData, error: countError } = await supabase
@@ -90,6 +101,18 @@ export default function TMScannerPage() {
 				if (!countError && countData) {
 					dateCount = countData.length;
 				}
+
+				// Count total items with same pallet_no (if exists)
+				if (palletNo) {
+					const { data: palletData, error: palletError } = await supabase
+						.from("mo_tm_barcodes")
+						.select("id")
+						.eq("pallet_no", palletNo);
+
+					if (!palletError && palletData) {
+						palletCount = palletData.length;
+					}
+				}
 			}
 
 			// Update UI (로컬 상태만 업데이트, DB에 저장하지 않음)
@@ -98,7 +121,9 @@ export default function TMScannerPage() {
 				scan_date: scanDate,
 				is_return: isReturnItem,
 				scanned_at: new Date().toISOString(),
+				pallet_no: isReturnItem ? palletNo : undefined,
 				date_count: isReturnItem ? dateCount : undefined, // RETURN인 경우에만 개수 저장
+				pallet_count: isReturnItem && palletNo ? palletCount : undefined,
 			};
 
 			setLastScanned(newScan);
@@ -108,9 +133,18 @@ export default function TMScannerPage() {
 					date: scanDate,
 					count: dateCount,
 				});
+				if (palletNo) {
+					setPalletStats({
+						palletNo: palletNo,
+						count: palletCount,
+					});
+				} else {
+					setPalletStats(null);
+				}
 				setStatus(`✅ RETURN - Found in ${scanDate} (${dateCount} items)`);
 			} else {
 				setDateStats(null);
+				setPalletStats(null);
 				setStatus(`❌ NO - Not found in TM list`);
 			}
 
@@ -221,6 +255,14 @@ export default function TMScannerPage() {
 							<div className="text-xl text-green-800 font-bold space-y-1">
 								<div>RETURN DATE : {formatDate(lastScanned.scan_date)}</div>
 								<div>TOTAL : {dateStats.count}</div>
+							</div>
+						)}
+						{lastScanned.is_return && palletStats && (
+							<div className="mt-4 pt-4 border-t-2 border-green-300">
+								<div className="text-3xl text-purple-700 font-bold space-y-2">
+									<div>PALLET NO : {palletStats.palletNo}</div>
+									<div className="text-4xl">PALLET TOTAL : {palletStats.count}</div>
+								</div>
 							</div>
 						)}
 					</div>

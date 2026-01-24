@@ -2,12 +2,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabaseClient";
 import { normalizeBarcode } from "../../../lib/barcode";
-import { TwoColumnHandsontable } from "../../../components/TwoColumnHandsontable";
+import { ThreeColumnHandsontable } from "../../../components/ThreeColumnHandsontable";
 
 type TMBarcode = {
 	id: number;
 	barcode: string;
 	product_date: string;
+	pallet_no: string;
 	created_at: string;
 };
 
@@ -33,7 +34,7 @@ export default function TMUploadPage() {
 			// Load only recent 100 items for display
 			const { data, error } = await supabase
 				.from("mo_tm_barcodes")
-				.select("id, barcode, product_date, created_at")
+				.select("id, barcode, product_date, pallet_no, created_at")
 				.order("created_at", { ascending: false })
 				.limit(100);
 
@@ -43,6 +44,7 @@ export default function TMUploadPage() {
 				id: item.id,
 				barcode: item.barcode,
 				product_date: item.product_date,
+				pallet_no: item.pallet_no || "",
 				created_at: item.created_at,
 			}));
 
@@ -58,7 +60,7 @@ export default function TMUploadPage() {
 	}, []);
 
 	// Save TM barcodes to database (accumulate)
-	const handleSaveTMBarcodes = useCallback(async (data: Array<{ date: string; barcode: string }>) => {
+	const handleSaveTMBarcodes = useCallback(async (data: Array<{ date: string; barcode: string; palletNo: string }>) => {
 		setIsLoading(true);
 		try {
 			// Filter and normalize data first
@@ -66,11 +68,13 @@ export default function TMUploadPage() {
 				.map(item => ({
 					date: item.date,
 					barcode: normalizeBarcode(item.barcode),
+					palletNo: item.palletNo,
 				}))
 				.filter(item => item.barcode.length === 12)
 				.map(item => ({
 					barcode: item.barcode,
 					product_date: item.date,
+					pallet_no: item.palletNo,
 				}));
 
 			const filteredCount = data.length - data.filter(d => normalizeBarcode(d.barcode).length === 12).length;
@@ -205,7 +209,7 @@ export default function TMUploadPage() {
 
 			{/* Handsontable for managing TM barcodes */}
 			<div className="space-y-3">
-				<TwoColumnHandsontable
+				<ThreeColumnHandsontable
 					onSave={handleSaveTMBarcodes}
 					initialData={[]}
 				/>
@@ -244,6 +248,12 @@ export default function TMUploadPage() {
 									</span>
 									<div className="text-xs text-gray-600 mt-1">
 										📅 Product Date: {formatDate(item.product_date)}
+										{item.pallet_no && (
+											<>
+												<br />
+												📦 Pallet: {item.pallet_no}
+											</>
+										)}
 									</div>
 								</div>
 								<span className="text-xs text-gray-500">
@@ -266,7 +276,7 @@ export default function TMUploadPage() {
 						No TM barcodes yet
 					</div>
 					<div className="text-gray-400 text-sm">
-						Use the table above to enter date (YYYY-MM-DD) and barcode (12 digits), then click "Save"
+						Use the table above to enter date (YYYY-MM-DD), barcode (12 digits), and pallet number, then click "Save"
 					</div>
 				</div>
 			)}

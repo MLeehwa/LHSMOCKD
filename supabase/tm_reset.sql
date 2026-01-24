@@ -7,12 +7,13 @@
 -- 1. 기존 테이블 및 관련 객체 삭제
 DROP TABLE IF EXISTS public.mo_tm_barcodes CASCADE;
 
--- 2. TM barcodes 테이블 생성 (날짜 + 바코드)
+-- 2. TM barcodes 테이블 생성 (날짜 + 바코드 + 팔렛번호)
 CREATE TABLE public.mo_tm_barcodes (
   id BIGSERIAL PRIMARY KEY,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   barcode TEXT NOT NULL,
-  product_date DATE NOT NULL
+  product_date DATE NOT NULL,
+  pallet_no TEXT
 );
 
 -- 3. Unique constraint (바코드 + 제품날짜 조합으로 중복 방지)
@@ -23,6 +24,9 @@ CREATE INDEX mo_tm_barcodes_barcode_idx ON public.mo_tm_barcodes (barcode);
 
 -- 5. Index for product_date lookups
 CREATE INDEX mo_tm_barcodes_date_idx ON public.mo_tm_barcodes (product_date);
+
+-- 5a. Index for pallet_no lookups
+CREATE INDEX mo_tm_barcodes_pallet_idx ON public.mo_tm_barcodes (pallet_no);
 
 -- 6. Enable Row Level Security
 ALTER TABLE public.mo_tm_barcodes ENABLE ROW LEVEL SECURITY;
@@ -40,4 +44,4 @@ CREATE POLICY "allow anon all" ON public.mo_tm_barcodes
   WITH CHECK (true);
 
 -- 완료!
--- 이제 TM Upload 페이지에서 날짜와 바코드를 업로드할 수 있습니다.
+-- 이제 TM Upload 페이지에서 날짜, 바코드, 팔렛번호를 업로드할 수 있습니다.
