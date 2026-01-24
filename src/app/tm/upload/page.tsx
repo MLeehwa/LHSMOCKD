@@ -79,59 +79,79 @@ export default function TMUploadPage() {
 
 		const filteredCount = data.length - data.filter(d => normalizeBarcode(d.barcode).length === 12).length;
 
-		// Insert in smaller batches (100) for better stability
+		// Insert in reasonable batches (200) for efficiency
 		if (normalizedData.length > 0) {
-			const BATCH_SIZE = 100;
+			const BATCH_SIZE = 200;
 			const totalBatches = Math.ceil(normalizedData.length / BATCH_SIZE);
 			let totalInserted = 0;
 			let totalDuplicates = 0;
+			let totalErrors = 0;
+			
+			console.log(`Starting upload: ${normalizedData.length} items in ${totalBatches} batches`);
 			
 			for (let i = 0; i < totalBatches; i++) {
 				const start = i * BATCH_SIZE;
 				const end = Math.min((i + 1) * BATCH_SIZE, normalizedData.length);
 				const batch = normalizedData.slice(start, end);
 				
-				setStatus(`⏳ Saving batch ${i + 1}/${totalBatches} (${batch.length} items)...`);
+				setStatus(`⏳ Saving batch ${i + 1}/${totalBatches} (${start + 1}-${end} of ${normalizedData.length})...`);
+				console.log(`Batch ${i + 1}/${totalBatches}: Processing ${batch.length} items`);
 				
-				// Use upsert with onConflict to handle duplicates gracefully
-				const { data: insertedData, error: batchError } = await supabase
-					.from("mo_tm_barcodes")
-					.upsert(batch, { 
-						onConflict: 'barcode,product_date',
-						ignoreDuplicates: true 
-					})
-					.select();
+				try {
+					// Try batch upsert first for speed
+					const { data: insertedData, error: batchError } = await supabase
+						.from("mo_tm_barcodes")
+						.upsert(batch, { 
+							onConflict: 'barcode,product_date',
+							ignoreDuplicates: false
+						})
+						.select();
 
-				if (!batchError) {
-					// Count how many were actually inserted (not duplicates)
-					const insertedCount = insertedData ? insertedData.length : 0;
-					totalInserted += insertedCount;
-					totalDuplicates += (batch.length - insertedCount);
-				} else {
-					// If batch fails, try individual inserts
-					setStatus(`⏳ Batch ${i + 1}/${totalBatches} error, trying individually...`);
-					for (const item of batch) {
-						const { data: singleData, error } = await supabase
-							.from("mo_tm_barcodes")
-							.upsert([item], { 
-								onConflict: 'barcode,product_date',
-								ignoreDuplicates: true 
-							})
-							.select();
-						
-						if (!error && singleData && singleData.length > 0) {
-							totalInserted++;
-						} else if (!error) {
-							totalDuplicates++;
+					if (!batchError) {
+						const insertedCount = insertedData ? insertedData.length : 0;
+						totalInserted += insertedCount;
+						totalDuplicates += (batch.length - insertedCount);
+						console.log(`Batch ${i + 1} success: ${insertedCount} inserted, ${batch.length - insertedCount} duplicates`);
+					} else if (batchError.code === '23505') {
+						// Duplicate error - process individually to count properly
+						console.log(`Batch ${i + 1} has duplicates, processing individually...`);
+						for (const item of batch) {
+							const { data: singleData, error } = await supabase
+								.from("mo_tm_barcodes")
+								.upsert([item], { 
+									onConflict: 'barcode,product_date',
+									ignoreDuplicates: false
+								})
+								.select();
+
+							if (!error && singleData && singleData.length > 0) {
+								totalInserted++;
+							} else if (!error || error.code === '23505') {
+								totalDuplicates++;
+							} else {
+								console.error(`Error on item:`, error, item);
+								totalErrors++;
+							}
 						}
+					} else {
+						console.error(`Batch ${i + 1} error:`, batchError);
+						totalErrors += batch.length;
 					}
+				} catch (batchError) {
+					console.error(`Exception on batch ${i + 1}:`, batchError);
+					totalErrors += batch.length;
 				}
 				
-				// Small delay between batches to avoid rate limiting
+				// Update progress
+				console.log(`Batch ${i + 1} complete: ${totalInserted} inserted, ${totalDuplicates} duplicates, ${totalErrors} errors`);
+				
+				// Delay between batches
 				if (i < totalBatches - 1) {
-					await new Promise(resolve => setTimeout(resolve, 100));
+					await new Promise(resolve => setTimeout(resolve, 300));
 				}
 			}
+
+			console.log(`Upload complete: ${totalInserted} inserted, ${totalDuplicates} duplicates, ${totalErrors} errors`);
 
 			// Reload TM barcodes
 			setStatus("Loading updated list...");
@@ -141,11 +161,14 @@ export default function TMUploadPage() {
 			if (totalDuplicates > 0) {
 				statusMsg += ` (${totalDuplicates} duplicates skipped)`;
 			}
+			if (totalErrors > 0) {
+				statusMsg += ` (${totalErrors} errors)`;
+			}
 			if (filteredCount > 0) {
 				statusMsg += ` (${filteredCount} filtered - not 12 digits)`;
 			}
 			setStatus(statusMsg);
-			} else {
+		} else {
 				setStatus("No valid data to save");
 			}
 		} catch (e) {

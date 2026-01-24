@@ -212,12 +212,23 @@ export default function TMScannerPage() {
 		});
 	};
 
-	// Background color based on scan result
+	// Background color based on scan result and pallet count
 	const bgColor = isReturn === null 
 		? "bg-gray-50" 
 		: isReturn 
-		? "bg-green-100" 
-		: "bg-red-100";
+		? (palletStats && palletStats.count === 8 ? "bg-green-700" : "bg-green-50") // Dark green for 8, light green for others
+		: "bg-red-300"; // Darker red for NO
+
+	// Get darker green shade for pallet count of 8
+	const getPalletBackgroundColor = (count: number) => {
+		if (count === 8) return "bg-green-900"; // Very dark green for 8 (darker than page bg)
+		return "bg-green-300"; // Light green for others
+	};
+
+	const getPalletTextColor = (count: number) => {
+		if (count === 8) return "text-white"; // White text for dark background
+		return "text-green-900"; // Dark text for light background
+	};
 
 	return (
 		<div className={`min-h-screen ${bgColor} transition-colors duration-300`}>
@@ -226,8 +237,8 @@ export default function TMScannerPage() {
 					<h1 className="text-xl sm:text-3xl font-semibold flex-1">TM Scanner</h1>
 				</div>
 
-				{/* Barcode input */}
-				<div className={`rounded border-4 p-4 ${isReturn === null ? "border-blue-400 bg-blue-50" : isReturn ? "border-green-500 bg-green-50" : "border-red-500 bg-red-50"}`}>
+			{/* Barcode input */}
+			<div className={`rounded border-4 p-4 ${isReturn === null ? "border-blue-400 bg-blue-50" : isReturn ? "border-green-500 bg-green-50" : "border-red-600 bg-red-100"}`}>
 					<label className="block text-lg text-gray-800 mb-3 font-bold">Scan Barcode</label>
 					<input
 						ref={inputRef}
@@ -242,29 +253,28 @@ export default function TMScannerPage() {
 					/>
 				</div>
 
-				{/* Result Display */}
-				{lastScanned && (
-					<div className={`rounded-lg border-4 p-6 text-center ${lastScanned.is_return ? "border-green-600 bg-green-50" : "border-red-600 bg-red-50"}`}>
-						<div className={`text-6xl font-bold mb-4 ${lastScanned.is_return ? "text-green-700" : "text-red-700"}`}>
+			{/* Result Display */}
+			{lastScanned && (
+				<div className={`rounded-lg border-4 p-6 text-center ${lastScanned.is_return ? "border-green-600 bg-green-50" : "border-red-700 bg-red-100"}`}>
+					<div className={`text-6xl font-bold mb-4 ${lastScanned.is_return ? "text-green-700" : "text-red-800"}`}>
 							{lastScanned.is_return ? "✅ RETURN" : "❌ NO"}
 						</div>
 						<div className="text-xl font-mono text-gray-900 mb-2">
 							{lastScanned.barcode}
 						</div>
-						{lastScanned.is_return && dateStats && (
-							<div className="text-xl text-green-800 font-bold space-y-1">
-								<div>RETURN DATE : {formatDate(lastScanned.scan_date)}</div>
-								<div>TOTAL : {dateStats.count}</div>
+					{lastScanned.is_return && dateStats && (
+						<div className="text-xl text-green-800 font-bold space-y-1">
+							<div>RETURN DATE : {formatDate(lastScanned.scan_date)}</div>
+							<div>TOTAL : {dateStats.count}</div>
+						</div>
+					)}
+					{lastScanned.is_return && palletStats && (
+						<div className={`mt-4 pt-4 border-t-2 border-green-300 rounded-lg ${getPalletBackgroundColor(palletStats.count)} p-4`}>
+							<div className={`text-5xl font-bold ${getPalletTextColor(palletStats.count)}`}>
+								PALLET TOTAL : {palletStats.count}
 							</div>
-						)}
-						{lastScanned.is_return && palletStats && (
-							<div className="mt-4 pt-4 border-t-2 border-green-300">
-								<div className="text-3xl text-purple-700 font-bold space-y-2">
-									<div>PALLET NO : {palletStats.palletNo}</div>
-									<div className="text-4xl">PALLET TOTAL : {palletStats.count}</div>
-								</div>
-							</div>
-						)}
+						</div>
+					)}
 					</div>
 				)}
 			</div>
