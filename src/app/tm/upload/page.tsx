@@ -77,57 +77,74 @@ export default function TMUploadPage() {
 					pallet_no: item.palletNo,
 				}));
 
-			const filteredCount = data.length - data.filter(d => normalizeBarcode(d.barcode).length === 12).length;
+		const filteredCount = data.length - data.filter(d => normalizeBarcode(d.barcode).length === 12).length;
 
-			// Insert in larger batches (1000) for speed
-			if (normalizedData.length > 0) {
-				const BATCH_SIZE = 1000;
-				const totalBatches = Math.ceil(normalizedData.length / BATCH_SIZE);
-				let totalInserted = 0;
+		// Insert in smaller batches (100) for better stability
+		if (normalizedData.length > 0) {
+			const BATCH_SIZE = 100;
+			const totalBatches = Math.ceil(normalizedData.length / BATCH_SIZE);
+			let totalInserted = 0;
+			let totalDuplicates = 0;
+			
+			for (let i = 0; i < totalBatches; i++) {
+				const start = i * BATCH_SIZE;
+				const end = Math.min((i + 1) * BATCH_SIZE, normalizedData.length);
+				const batch = normalizedData.slice(start, end);
 				
-				for (let i = 0; i < totalBatches; i++) {
-					const start = i * BATCH_SIZE;
-					const end = Math.min((i + 1) * BATCH_SIZE, normalizedData.length);
-					const batch = normalizedData.slice(start, end);
-					
-					setStatus(`⏳ Saving batch ${i + 1}/${totalBatches} (${batch.length} items)...`);
-					
-					// Try batch insert first
-					const { error: batchError } = await supabase
-						.from("mo_tm_barcodes")
-						.insert(batch);
+				setStatus(`⏳ Saving batch ${i + 1}/${totalBatches} (${batch.length} items)...`);
+				
+				// Use upsert with onConflict to handle duplicates gracefully
+				const { data: insertedData, error: batchError } = await supabase
+					.from("mo_tm_barcodes")
+					.upsert(batch, { 
+						onConflict: 'barcode,product_date',
+						ignoreDuplicates: true 
+					})
+					.select();
 
-					if (!batchError) {
-						totalInserted += batch.length;
-					} else if (batchError.code === '23505') {
-						// Duplicate key error - insert individually to count successes
-						setStatus(`⏳ Batch ${i + 1}/${totalBatches} has duplicates, processing individually...`);
-						for (const item of batch) {
-							const { error } = await supabase
-								.from("mo_tm_barcodes")
-								.insert([item]);
-							if (!error) {
-								totalInserted++;
-							}
+				if (!batchError) {
+					// Count how many were actually inserted (not duplicates)
+					const insertedCount = insertedData ? insertedData.length : 0;
+					totalInserted += insertedCount;
+					totalDuplicates += (batch.length - insertedCount);
+				} else {
+					// If batch fails, try individual inserts
+					setStatus(`⏳ Batch ${i + 1}/${totalBatches} error, trying individually...`);
+					for (const item of batch) {
+						const { data: singleData, error } = await supabase
+							.from("mo_tm_barcodes")
+							.upsert([item], { 
+								onConflict: 'barcode,product_date',
+								ignoreDuplicates: true 
+							})
+							.select();
+						
+						if (!error && singleData && singleData.length > 0) {
+							totalInserted++;
+						} else if (!error) {
+							totalDuplicates++;
 						}
-					} else {
-						throw batchError;
 					}
 				}
-
-				// Reload TM barcodes
-				setStatus("Loading updated list...");
-				await loadTMBarcodes();
 				
-				let statusMsg = `✅ Successfully added ${totalInserted} new TM barcodes`;
-				const skipped = normalizedData.length - totalInserted;
-				if (skipped > 0) {
-					statusMsg += ` (${skipped} duplicates skipped)`;
+				// Small delay between batches to avoid rate limiting
+				if (i < totalBatches - 1) {
+					await new Promise(resolve => setTimeout(resolve, 100));
 				}
-				if (filteredCount > 0) {
-					statusMsg += ` (${filteredCount} filtered - not 12 digits)`;
-				}
-				setStatus(statusMsg);
+			}
+
+			// Reload TM barcodes
+			setStatus("Loading updated list...");
+			await loadTMBarcodes();
+			
+			let statusMsg = `✅ Successfully added ${totalInserted} new TM barcodes`;
+			if (totalDuplicates > 0) {
+				statusMsg += ` (${totalDuplicates} duplicates skipped)`;
+			}
+			if (filteredCount > 0) {
+				statusMsg += ` (${filteredCount} filtered - not 12 digits)`;
+			}
+			setStatus(statusMsg);
 			} else {
 				setStatus("No valid data to save");
 			}
