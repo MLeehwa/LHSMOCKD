@@ -63,21 +63,24 @@ export default function TMUploadPage() {
 	const handleSaveTMBarcodes = useCallback(async (data: Array<{ date: string; barcode: string; palletNo: string }>) => {
 		setIsLoading(true);
 		try {
-			// Filter and normalize data first
-			const normalizedData = data
-				.map(item => ({
-					date: item.date,
-					barcode: normalizeBarcode(item.barcode),
-					palletNo: item.palletNo,
-				}))
-				.filter(item => item.barcode.length === 12)
-				.map(item => ({
-					barcode: item.barcode,
-					product_date: item.date,
-					pallet_no: item.palletNo,
-				}));
+		// Filter and normalize data first
+		const normalizedData = data
+			.map(item => ({
+				date: item.date,
+				barcode: normalizeBarcode(item.barcode),
+				palletNo: item.palletNo,
+			}))
+			.filter(item => item.barcode.length === 8 || item.barcode.length === 12)
+			.map(item => ({
+				barcode: item.barcode,
+				product_date: item.date,
+				pallet_no: item.palletNo,
+			}));
 
-		const filteredCount = data.length - data.filter(d => normalizeBarcode(d.barcode).length === 12).length;
+		const filteredCount = data.length - data.filter(d => {
+			const len = normalizeBarcode(d.barcode).length;
+			return len === 8 || len === 12;
+		}).length;
 
 		// Insert in reasonable batches (200) for efficiency
 		if (normalizedData.length > 0) {
@@ -165,7 +168,7 @@ export default function TMUploadPage() {
 				statusMsg += ` (${totalErrors} errors)`;
 			}
 			if (filteredCount > 0) {
-				statusMsg += ` (${filteredCount} filtered - not 12 digits)`;
+				statusMsg += ` (${filteredCount} filtered - not 8 or 12 digits)`;
 			}
 			setStatus(statusMsg);
 		} else {
@@ -315,9 +318,9 @@ export default function TMUploadPage() {
 					<div className="text-gray-500 text-base sm:text-lg mb-2">
 						No TM barcodes yet
 					</div>
-					<div className="text-gray-400 text-sm">
-						Use the table above to enter date (YYYY-MM-DD), barcode (12 digits), and pallet number, then click "Save"
-					</div>
+				<div className="text-gray-400 text-sm">
+					Use the table above to enter date (YYYY-MM-DD), barcode (8 or 12 digits), and pallet number, then click "Save"
+				</div>
 				</div>
 			)}
 		</div>
