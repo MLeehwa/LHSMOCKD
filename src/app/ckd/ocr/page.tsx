@@ -11,7 +11,7 @@ export default function UploadPage() {
 	const [lines, setLines] = useState<OcrLine[]>([]);
 	const [progress, setProgress] = useState<number>(0);
     const [status, setStatus] = useState<string>("");
-	const [prefixText, setPrefixText] = useState<string>("1M,2M");
+	const [prefixText, setPrefixText] = useState<string>("1M,2M,SR");
 	const [uploading, setUploading] = useState<boolean>(false);
 	const [clearing, setClearing] = useState<boolean>(false);
 	const fileInputRef = useRef<HTMLInputElement | null>(null);
